@@ -268,10 +268,12 @@ def check_text_encoder_equivalence(clip_model):
     print(f"[Check] text encoder max diff: {max_diff:.2e}")
     print(f"[Check] text encoder mean cosine: {mean_cos:.6f}")
     if max_diff > 1e-4 or mean_cos < 0.999:
-        print("[WARN] text encoder equivalence check FAILED!")
-    else:
-        print("[Check] text encoder equivalence check PASSED")
-    return max_diff < 1e-4 and mean_cos > 0.999
+        raise RuntimeError(
+            f"Text encoder equivalence check FAILED: max_diff={max_diff:.2e}, mean_cos={mean_cos:.6f}. "
+            "Manual text encoder does not match open_clip.encode_text(). Stop training."
+        )
+    print("[Check] text encoder equivalence check PASSED")
+    return True
 
 
 def evaluate_detailed(model, test_loader):
@@ -458,6 +460,12 @@ def main():
     # 冻结 prompt，注入 LoRA 到 image encoder
     for p in prompt_learner.parameters():
         p.requires_grad = False
+    
+    # 记录 Stage 1 最终准确率（作为 Stage 2 的基准）
+    model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
+    stage1_final_acc, _, _, _ = evaluate_detailed(model, test_loader)
+    print(f"\n[Stage 1] Final frozen-prompt accuracy before LoRA: {stage1_final_acc:.2f}%")
+    
     print(f"\n{'='*60}")
     print("Stage 2: LoRA Fine-tuning (prompt frozen)")
     print(f"{'='*60}")
@@ -468,8 +476,6 @@ def main():
     n_trainable = sum(p.numel() for p in clip_model.parameters() if p.requires_grad)
     print(f"[Model] LoRA trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
 
-    model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
-    
     # 只优化 LoRA 参数
     lora_params = [p for p in clip_model.parameters() if p.requires_grad]
     optimizer = AdamW(lora_params, lr=args.lora_lr, weight_decay=1e-4)
@@ -491,12 +497,18 @@ def main():
         best_acc = max(best_acc, acc)
         metrics.append([epoch + 1, loss, acc])
         
+        delta = acc - stage1_final_acc
         print(f"Epoch {epoch+1:2d}/{args.lora_epochs} | Loss: {loss:.4f} | "
-              f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | Time: {epoch_time:.1f}s")
+              f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | "
+              f"Delta vs Stage1: {delta:+.2f}% | Time: {epoch_time:.1f}s")
     
     total_time = time.time() - t_start
+    gain = best_acc - stage1_final_acc
     print("=" * 60)
-    print(f"Final Best Accuracy: {best_acc:.2f}%")
+    print(f"Stage 1 Final Accuracy: {stage1_final_acc:.2f}%")
+    print(f"Stage 2 Best Accuracy:  {best_acc:.2f}%")
+    print(f"M5 Gain over CoOp:      {gain:+.2f}%")
+    print("=" * 60)
     print(f"Stage 2 time: {total_time:.1f}s")
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() / 1024**3

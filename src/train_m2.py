@@ -284,10 +284,12 @@ def check_text_encoder_equivalence(clip_model):
     print(f"[Check] text encoder max diff: {max_diff:.2e}")
     print(f"[Check] text encoder mean cosine: {mean_cos:.6f}")
     if max_diff > 1e-4 or mean_cos < 0.999:
-        print("[WARN] text encoder equivalence check FAILED!")
-    else:
-        print("[Check] text encoder equivalence check PASSED")
-    return max_diff < 1e-4 and mean_cos > 0.999
+        raise RuntimeError(
+            f"Text encoder equivalence check FAILED: max_diff={max_diff:.2e}, mean_cos={mean_cos:.6f}. "
+            "Manual text encoder does not match open_clip.encode_text(). Stop training."
+        )
+    print("[Check] text encoder equivalence check PASSED")
+    return True
 
 
 @torch.no_grad()
@@ -490,7 +492,7 @@ def main():
 
     total_time = time.time() - t_start
     print("=" * 60)
-    print(f"Final Best Accuracy: {best_acc:.2f}%")
+    print(f"M2 CoOp Best Accuracy: {best_acc:.2f}%")
     print(f"Total time: {total_time:.1f}s")
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() / 1024**3
