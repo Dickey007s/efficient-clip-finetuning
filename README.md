@@ -42,12 +42,30 @@ efficiency for adapting CLIP to traffic-sign recognition.
 | M2 | CoOp | about 8 K | Zhou et al., IJCV 2022 |
 | M3 | CLIP-Adapter | about 0.5 M | Gao et al., IJCV 2023 |
 | M4 | LoRA on CLIP | about 0.15 M | Hu et al., 2022 |
+| **M5** | **CoOp-LoRA (ours)** | **about 0.16 M** | **This work** |
 
 Planned ablation studies:
 
 - Few-shot learning curves at 1, 2, 4, 8, and 16 shots per class.
 - LoRA rank sweep at r equal to 1, 4, 8, 16, and 32.
 - Failure-case analysis with a normalized confusion matrix.
+- **CoOp-LoRA sequential ablation**: CoOp only, LoRA only, CoOp then LoRA, and LoRA then CoOp, to verify the contribution and ordering of each stage.
+
+### CoOp-LoRA (M5)
+
+**Core idea**: Text-side optimization (learned prompts via CoOp) and vision-side adaptation (LoRA) are complementary and can be trained sequentially under a fixed backbone.
+
+**Stage one -- CoOp warm-up**: Freeze the entire CLIP model and optimize only the continuous prompt vectors. This quickly learns a good text initialization from few-shot data.
+
+**Stage two -- LoRA fine-tuning**: Freeze CLIP and the converged CoOp prompts, then inject LoRA layers into the vision encoder. This adapts visual feature extraction on top of the improved text initialization.
+
+**Why this works**: CoOp optimizes the input side (how to ask CLIP), while LoRA optimizes the intermediate layers (how to see the image). The two parameter sets do not overlap, and stage one provides a better initialization for stage two.
+
+**Ablation variants**:
+- M5a: CoOp only (same as M2, verifies stage one alone).
+- M5b: LoRA only (same as M4, verifies stage two alone).
+- M5c: CoOp then LoRA (the proposed method).
+- M5d: LoRA then CoOp (reversed order, verifies stage ordering).
 
 ---
 
