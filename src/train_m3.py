@@ -30,7 +30,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
-from torch.cuda.amp import autocast, GradScaler
 import open_clip
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB

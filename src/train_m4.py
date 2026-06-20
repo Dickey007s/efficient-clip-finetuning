@@ -141,7 +141,7 @@ def load_clip_with_lora(rank=4, alpha=8):
     model, _, _ = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained="openai", force_quick_gelu=True,
     )
-    model = model.to(DEVICE)
+    model = model.to(DEVICE).eval()
 
     # 冻结所有参数
     for p in model.parameters():

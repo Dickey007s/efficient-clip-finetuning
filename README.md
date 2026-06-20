@@ -65,7 +65,7 @@ Planned ablation studies:
 - M5a: CoOp only (same as M2, verifies stage one alone).
 - M5b: LoRA only (same as M4, verifies stage two alone).
 - M5c: CoOp then LoRA (the proposed method, verifies sequential stacking).
-- M5d: LoRA then CoOp (reversed order, verifies stage ordering matters).
+- M5d: LoRA then CoOp (reversed order, verifies stage ordering matters; see `train_m5d.py`).
 
 **How to read the M5 result**: The primary criterion is `M5_best > max(M2_best, M4_best)`. A positive margin indicates that the two methods are not fully redundant. A secondary criterion is whether this margin is consistently positive across random seeds, which would strengthen the claim of a true complementary effect.
 
@@ -208,6 +208,16 @@ M5_gain = M5_best - max(M2_best, M4_best)
 - If `M5_gain < 0`: The second stage overwrites or corrupts the first stage's gains.
 
 The per-epoch log of M5 explicitly prints `Delta vs Stage1` so you can watch the LoRA stage pull accuracy above the frozen CoOp prompt in real time.
+
+### Running M5d (reversed-order ablation)
+
+To verify that the stage ordering matters, run the reversed pipeline:
+
+```cmd
+python src/train_m5d.py --lora_epochs 20 --coop_epochs 10 --lr 0.002 --lora_lr 1e-4 --batch_size 64 --shots 16 --n_ctx 16 --rank 4 --alpha 8 --save outputs/m5d_16shot.pt
+```
+
+Expected behavior: if `M5c_best > M5d_best`, then "text anchor first, then visual" is better than "visual first, then text" for GTSRB.
 
 ### Data exploration outputs
 
