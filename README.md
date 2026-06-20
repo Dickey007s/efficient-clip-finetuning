@@ -1,0 +1,207 @@
+# Efficient Fine-Tuning of CLIP for Traffic Sign Recognition: A Comparative Study
+
+> **CLIP 在交通标志识别上的高效微调对比研究**
+>
+> Course Project · Deep Learning & Computer Vision · Application Track
+>
+> Systematically comparing **five parameter-efficient adaptation methods** (Zero-shot · Linear Probe · CoOp · CLIP-Adapter · LoRA) on the **GTSRB** traffic-sign benchmark, under a consumer-GPU budget (RTX 4060, 8GB).
+
+---
+
+## 📌 Overview
+
+Vision-language models like CLIP achieve strong zero-shot performance on natural images, but their accuracy **drops sharply on domain-specific, symbolic visual data** such as traffic signs (we observe **zero-shot Top-1 ≈ 27.5%** on GTSRB — far below natural-image benchmarks).
+
+This project investigates: **under a consumer-GPU (8GB) and limited-label budget, which parameter-efficient fine-tuning (PEFT) method delivers the best accuracy-per-parameter and accuracy-per-sample trade-off?**
+
+| Method | Trainable Params | Reference |
+|---|---|---|
+| M0 · Zero-shot CLIP        | 0          | Radford et al. (2021) |
+| M1 · Linear Probe          | ~33 K      | Radford et al. (2021) |
+| M2 · CoOp (learned prompt) | ~8 K       | Zhou et al., IJCV 2022 |
+| M3 · CLIP-Adapter          | ~0.5 M     | Gao et al., IJCV 2023 |
+| M4 · LoRA on CLIP          | ~0.15 M    | Hu et al. (2022) |
+
+**Status:** 🟢 Environment ready · 🟢 Data ready · 🟢 Zero-shot baseline validated · 🟡 Training framework in progress
+
+---
+
+## 📑 Table of Contents
+
+- [Overview](#-overview)
+- [Key Results](#-key-results)
+- [Repository Structure](#-repository-structure)
+- [Environment Setup](#-environment-setup)
+- [Quick Start](#-quick-start)
+- [Dataset](#-dataset)
+- [Methods](#-methods)
+- [Results & Figures](#-results--figures)
+- [Citation](#-citation)
+- [License](#-license)
+- [Acknowledgements](#-acknowledgements)
+
+---
+
+## 🏆 Key Results
+
+> _Pending experiments — to be populated as the training framework matures._
+
+| Method | Test Top-1 | Trainable Params | Train Time (4060) |
+|---|---|---|---|
+| Zero-shot CLIP  | 27.5% (sanity) | 0 | — |
+| Linear Probe    | _TBD_ | ~33 K | _TBD_ |
+| CoOp            | _TBD_ | ~8 K | _TBD_ |
+| CLIP-Adapter    | _TBD_ | ~0.5 M | _TBD_ |
+| LoRA (r=8)      | _TBD_ | ~0.15 M | _TBD_ |
+
+---
+
+## 📂 Repository Structure
+
+```
+efficient-clip-finetuning/
+├── README.md
+├── LICENSE
+├── requirements.txt
+├── src/
+│   ├── class_names.py     # 43 readable class names + prompt generation
+│   ├── download_data.py   # GTSRB download (torchvision)
+│   ├── explore_data.py    # dataset statistics & visualization
+│   └── check_clip.py      # CLIP load verification + zero-shot sanity
+├── figures/               # generated plots (paper figures)
+├── results/               # CSV statistics / evaluation outputs
+├── outputs/               # training logs / checkpoints
+└── notebooks/             # exploratory notebooks
+```
+
+> `data/` is excluded from version control (download via `download_data.py`).
+
+---
+
+## 🛠 Environment Setup
+
+**Verified on:** Windows 11 · Python 3.13 · CUDA 13.0 · RTX 4060 Laptop (8GB) · conda env `QuantAI`
+
+### Option A — Reuse the existing conda env
+```cmd
+C:\Users\<you>\miniconda3\Scripts\activate QuantAI
+```
+
+### Option B — Fresh environment
+```cmd
+conda create -n clip-tsn python=3.13 -y
+conda activate clip-tsn
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+pip install -r requirements.txt
+```
+
+### Windows note
+If you hit `OMP: Error #15`, set before running:
+```cmd
+set KMP_DUPLICATE_LIB_OK=TRUE
+```
+
+---
+
+## 🚀 Quick Start
+
+```cmd
+:: 1. Download GTSRB (~276 MB)
+python src/download_data.py
+
+:: 2. Explore the dataset
+python src/explore_data.py
+
+:: 3. Verify CLIP + zero-shot sanity check
+python src/check_clip.py
+```
+
+---
+
+## 🗂 Dataset
+
+**GTSRB — German Traffic Sign Recognition Benchmark**
+
+| Property | Value |
+|---|---|
+| Classes | 43 (German traffic signs) |
+| Train | 26,640 images |
+| Test | 12,630 images |
+| Image size | Variable (median ~44×43, resized to 224 for CLIP) |
+| Class balance | Imbalanced (150–1,500 per class) |
+
+Download sources (fallback if torchvision is slow):
+- Official: https://benchmark.ini.rub.de/gtsrb_dataset.html
+- Kaggle: https://www.kaggle.com/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign
+- Zenodo: https://zenodo.org/records/13741936
+
+---
+
+## 🧠 Methods
+
+| ID | Method | Idea |
+|---|---|---|
+| M0 | Zero-shot | No training; match image to class prompts via CLIP similarity |
+| M1 | Linear Probe | Freeze CLIP backbone, train a linear classifier on features |
+| M2 | CoOp | Learn continuous prompt vectors; backbone frozen |
+| M3 | CLIP-Adapter | Append a small bottleneck adapter; residual feature blend |
+| M4 | LoRA | Inject low-rank matrices into attention layers |
+
+Planned ablations: few-shot curves (1/2/4/8/16-shot), LoRA rank sweep (r=1/4/8/16/32), failure-case analysis & confusion matrix.
+
+---
+
+## 📊 Results & Figures
+
+Exploration outputs (auto-generated by `explore_data.py`):
+
+- `figures/class_distribution.png` — class distribution (train vs test)
+- `figures/samples_per_class.png` — one sample per class (0–42)
+- `results/train_class_distribution.csv` — per-class counts
+- `results/train_image_size_stats.csv` — image-size statistics
+
+---
+
+## 📝 Citation
+
+If you build on this work, please cite the core methods:
+
+```bibtex
+@article{radford2021clip,
+  title={Learning Transferable Visual Models From Natural Language Supervision},
+  author={Radford, Alec and Kim, Jong Wook and Hallacy, Chris and others},
+  journal={ICML},
+  year={2021}
+}
+
+@article{zhou2022coop,
+  title={Learning to Prompt for Vision-Language Models},
+  author={Zhou, Kaiyang and Yang, Jingkang and Loy, Chen Change and Liu, Ziwei},
+  journal={International Journal of Computer Vision (IJCV)},
+  year={2022}
+}
+
+@article{gao2023clipadapter,
+  title={CLIP-Adapter: Better Vision-Language Models with Feature Adapters},
+  author={Gao, Peng and Geng, Shijie and others},
+  journal={International Journal of Computer Vision (IJCV)},
+  year={2023}
+}
+```
+
+---
+
+## 📄 License
+
+Code is released under the **MIT License**. See [LICENSE](LICENSE).
+
+The GTSRB dataset is licensed separately by its creators (see the official dataset page).
+
+---
+
+## 🙏 Acknowledgements
+
+- [open_clip](https://github.com/mlfoundations/open_clip) — CLIP model zoo
+- [PEFT (HuggingFace)](https://github.com/huggingface/peft) — LoRA implementation
+- [torchvision](https://github.com/pytorch/vision) — GTSRB loader
+- Course: Deep Learning & Computer Vision

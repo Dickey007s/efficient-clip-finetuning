@@ -1,0 +1,29 @@
+# ============================================================
+# CLIP Traffic Sign Recognition — Dependencies
+# Python 3.13 | CUDA 13.0 | conda env: QuantAI
+# ============================================================
+#
+# 安装方式（在 QuantAI 环境里）:
+#   pip install -r requirements.txt
+#
+# torch / torchvision 已随环境安装 (2.10.0+cu130 / 0.25.0+cu130)
+# 如需新建干净环境，见 README.md 的环境一节。
+# -----------------------------------------------------------
+
+# --- 核心模型与训练 ---
+open_clip_torch>=2.24.0      # CLIP 模型加载（含多种预训练权重）
+peft>=0.13.0                 # LoRA 高效微调
+transformers>=4.45.0         # 备用骨干 / tokenizer
+
+# --- 数据处理 ---
+numpy>=1.26
+pandas>=2.0
+Pillow>=10.0
+scikit-learn>=1.3           # confusion_matrix, train_test_split
+
+# --- 可视化 ---
+matplotlib>=3.7
+seaborn>=0.13               # 热力图 / confusion matrix 美化
+
+# --- 训练辅助 ---
+tqdm>=4.66
