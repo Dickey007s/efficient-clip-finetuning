@@ -147,7 +147,7 @@ def load_clip_with_lora(rank=4, alpha=8):
     for p in model.parameters():
         p.requires_grad = False
 
-    # 注入完整 LoRA 到 image encoder (Q/K/V/out_proj + c_fc/c_proj)
+    # 注入轻量 LoRA 到 image encoder: only Q/V attention
     # 用自定义 AttentionWithLoRA 替换 MHA，解决 in_proj 无法被 peft 匹配的问题
     print(f"[Model] Injecting LoRA (rank={rank}, alpha={alpha}) into ViT...")
     inject_lora_into_visual(model.visual, rank=rank, alpha=alpha)
@@ -305,7 +305,7 @@ def train_epoch(model, text_features, train_loader, optimizer, scaler, criterion
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--shots", type=int, default=None, help="Few-shot: shots per class")
     parser.add_argument("--rank", type=int, default=4, help="LoRA rank")

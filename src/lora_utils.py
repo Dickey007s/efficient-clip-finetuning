@@ -79,10 +79,10 @@ class AttentionWithLoRA(nn.Module):
                 p.requires_grad = trainable
             return lin
 
-        # Q 和 V 挂 LoRA（可训练），K 冻结
-        q_lin = make_linear(W[:d], b[:d] if b is not None else None, trainable=True)
+        # Q 和 V 的原始 Linear 权重最终会被 LoRALinear 冻结，这里先标记为不可训练
+        q_lin = make_linear(W[:d], b[:d] if b is not None else None, trainable=False)
         k_lin = make_linear(W[d:2*d], b[d:2*d] if b is not None else None, trainable=False)
-        v_lin = make_linear(W[2*d:], b[2*d:] if b is not None else None, trainable=True)
+        v_lin = make_linear(W[2*d:], b[2*d:] if b is not None else None, trainable=False)
 
         # out_proj 冻结（不挂 LoRA）
         out_lin = nn.Linear(self.embed_dim, self.embed_dim,
