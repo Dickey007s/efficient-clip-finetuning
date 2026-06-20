@@ -125,22 +125,38 @@ class CoOpLoRAModel(nn.Module):
         self.prompt_learner = prompt_learner
         self.dtype = clip_model.token_embedding.weight.dtype
 
+    def encode_text_with_prompts(self):
+        prompts = self.prompt_learner()  # [n_cls, context_length, dim]
+
+        # open_clip 新版 transformer 是 batch-first: [N, L, D]
+        x = prompts + self.clip_model.positional_embedding.to(prompts.dtype)
+
+        # 必须传 attn_mask，和 open_clip.encode_text 保持一致
+        x = self.clip_model.transformer(
+            x,
+            attn_mask=self.clip_model.attn_mask,
+        )
+
+        x = self.clip_model.ln_final(x)
+
+        # EOT token: tokenized_prompts 中最大值对应的位置
+        eot_indices = self.prompt_learner.tokenized_prompts.argmax(dim=-1)
+        x = x[torch.arange(x.shape[0], device=x.device), eot_indices]
+
+        # text_projection 可能是 nn.Linear 或矩阵
+        if self.clip_model.text_projection is not None:
+            if isinstance(self.clip_model.text_projection, nn.Linear):
+                x = self.clip_model.text_projection(x)
+            else:
+                x = x @ self.clip_model.text_projection
+
+        return F.normalize(x, dim=-1)
+
     def forward(self, image):
         image_features = self.clip_model.encode_image(image.type(self.dtype))
         image_features = F.normalize(image_features, dim=-1)
 
-        prompts = self.prompt_learner()
-        x = prompts + self.clip_model.positional_embedding.type(self.dtype)
-        x = x.permute(1, 0, 2)
-        x = self.clip_model.transformer(x)
-        x = x.permute(1, 0, 2)
-        x = self.clip_model.ln_final(x).type(self.dtype)
-
-        eot_indices = self.prompt_learner.tokenized_prompts.argmax(dim=-1)
-        x = x[torch.arange(x.shape[0]), eot_indices]
-
-        text_features = x @ self.clip_model.text_projection
-        text_features = F.normalize(text_features, dim=-1)
+        text_features = self.encode_text_with_prompts()
 
         logit_scale = self.clip_model.logit_scale.exp()
         logits = logit_scale * image_features @ text_features.t()
@@ -217,6 +233,45 @@ def load_clip():
     n_total = sum(p.numel() for p in model.parameters())
     print(f"[Model] CLIP total params: {n_total/1e6:.1f}M (frozen)")
     return model
+
+
+@torch.no_grad()
+def check_text_encoder_equivalence(clip_model):
+    """验证手动 text encoder 和 open_clip.encode_text 等价。"""
+    clip_model.eval()
+    prompts = [f"a photo of a {name}." for name in CLASS_NAMES]
+    tokenized = open_clip.tokenize(prompts).to(DEVICE)
+
+    # 官方 encode_text
+    f_ref = clip_model.encode_text(tokenized)
+    f_ref = F.normalize(f_ref, dim=-1)
+
+    # 手写 text encoder（无 learnable ctx，只用原 token embedding）
+    x = clip_model.token_embedding(tokenized)
+    x = x + clip_model.positional_embedding.to(x.dtype)
+    x = clip_model.transformer(x, attn_mask=clip_model.attn_mask)
+    x = clip_model.ln_final(x)
+
+    eot_indices = tokenized.argmax(dim=-1)
+    x = x[torch.arange(x.shape[0], device=x.device), eot_indices]
+
+    if clip_model.text_projection is not None:
+        if isinstance(clip_model.text_projection, nn.Linear):
+            x = clip_model.text_projection(x)
+        else:
+            x = x @ clip_model.text_projection
+
+    f_manual = F.normalize(x, dim=-1)
+
+    max_diff = (f_ref - f_manual).abs().max().item()
+    mean_cos = (f_ref * f_manual).sum(dim=-1).mean().item()
+    print(f"[Check] text encoder max diff: {max_diff:.2e}")
+    print(f"[Check] text encoder mean cosine: {mean_cos:.6f}")
+    if max_diff > 1e-4 or mean_cos < 0.999:
+        print("[WARN] text encoder equivalence check FAILED!")
+    else:
+        print("[Check] text encoder equivalence check PASSED")
+    return max_diff < 1e-4 and mean_cos > 0.999
 
 
 def evaluate_detailed(model, test_loader):
@@ -352,6 +407,7 @@ def main():
 
     # 加载 CLIP（全部冻结）
     clip_model = load_clip()
+    check_text_encoder_equivalence(clip_model)
 
     # 创建 PromptLearner
     ctx_dim = clip_model.token_embedding.weight.shape[1]
@@ -423,6 +479,9 @@ def main():
     best_acc = 0.0
     t_start = time.time()
     metrics = []
+    confusion = None
+    per_class_acc = None
+    failures = []
     
     for epoch in range(args.lora_epochs):
         t0 = time.time()
@@ -464,10 +523,12 @@ def main():
         f.write(logger.getvalue())
     print(f"[Save] Log saved to {log_path}")
     
-    save_metrics(metrics, save_path)
-    save_confusion(confusion, save_path)
-    save_per_class(per_class_acc, save_path)
-    save_failures(failures, save_path)
+    if metrics:
+        save_metrics(metrics, save_path)
+    if confusion is not None:
+        save_confusion(confusion, save_path)
+        save_per_class(per_class_acc, save_path)
+        save_failures(failures, save_path)
     
     sys.stdout = logger.terminal
 
