@@ -197,6 +197,108 @@ def evaluate(model, adapter, text_features, test_loader, ratio=0.2):
     return 100.0 * correct / total
 
 
+def evaluate_detailed(model, adapter, text_features, test_loader, ratio=0.2):
+    """
+    详细评估：返回准确率、混淆矩阵、每类准确率、失败案例。
+    """
+    model.eval()
+    adapter.eval()
+    correct, total = 0, 0
+    all_preds = []
+    all_labels = []
+    all_indices = []
+    
+    with torch.no_grad():
+        for batch_idx, (images, labels) in enumerate(test_loader):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            with torch.amp.autocast('cuda'):
+                image_features = model.encode_image(images)
+                # adapter + 残差融合
+                adapted = adapter(image_features)
+                image_features = ratio * adapted + (1 - ratio) * image_features
+                image_features = F.normalize(image_features, dim=-1)
+                # 相似度
+                logits = 100.0 * image_features @ text_features.t()
+            preds = logits.argmax(dim=-1)
+            
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+            
+            all_preds.extend(preds.cpu().tolist())
+            all_labels.extend(labels.cpu().tolist())
+            # 记录全局索引（近似）
+            start_idx = batch_idx * test_loader.batch_size
+            all_indices.extend(range(start_idx, start_idx + len(labels)))
+    
+    acc = 100.0 * correct / total
+    
+    # 混淆矩阵
+    num_classes = 43
+    confusion = torch.zeros(num_classes, num_classes, dtype=torch.long)
+    for t, p in zip(all_labels, all_preds):
+        confusion[t, p] += 1
+    
+    # 每类准确率
+    per_class_acc = {}
+    for c in range(num_classes):
+        class_total = confusion[c].sum().item()
+        class_correct = confusion[c, c].item()
+        per_class_acc[c] = 100.0 * class_correct / class_total if class_total > 0 else 0.0
+    
+    # 失败案例
+    failures = [(idx, t, p) for idx, t, p in zip(all_indices, all_labels, all_preds) if t != p]
+    
+    return acc, confusion, per_class_acc, failures
+
+
+def save_metrics(metrics, save_path):
+    """保存训练曲线数据：epoch, loss, test_acc。"""
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_metrics.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['epoch', 'loss', 'test_acc'])
+        for row in metrics:
+            writer.writerow(row)
+    print(f"[Save] Metrics saved to {csv_path}")
+
+
+def save_confusion(confusion, save_path):
+    """保存混淆矩阵为 CSV。"""
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_confusion.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['true_class'] + [f'pred_{i}' for i in range(43)])
+        for i in range(43):
+            writer.writerow([i] + confusion[i].tolist())
+    print(f"[Save] Confusion matrix saved to {csv_path}")
+
+
+def save_per_class(per_class_acc, save_path):
+    """保存每类准确率为 CSV。"""
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_per_class.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['class_id', 'class_name', 'accuracy'])
+        for c in range(43):
+            writer.writerow([c, CLASS_NAMES[c], f"{per_class_acc[c]:.2f}"])
+    print(f"[Save] Per-class accuracy saved to {csv_path}")
+
+
+def save_failures(failures, save_path, max_samples=100):
+    """保存失败案例为 CSV。"""
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_failures.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['image_idx', 'true_label', 'true_name', 'pred_label', 'pred_name'])
+        for idx, t, p in failures[:max_samples]:
+            writer.writerow([idx, t, CLASS_NAMES[t], p, CLASS_NAMES[p]])
+    print(f"[Save] Failures ({min(len(failures), max_samples)} samples) saved to {csv_path}")
+
+
 def train_epoch(model, adapter, text_features, train_loader, optimizer, scaler, criterion, ratio=0.2):
     adapter.train()
     total_loss = 0.0
@@ -271,14 +373,18 @@ def main():
     # 训练循环
     best_acc = 0.0
     t_start = time.time()
+    metrics = []  # [epoch, loss, test_acc]
 
     for epoch in range(args.epochs):
         t0 = time.time()
         loss = train_epoch(clip_model, adapter, text_features, train_loader,
                            optimizer, scaler, criterion)
-        acc = evaluate(clip_model, adapter, text_features, test_loader)
+        
+        # 评估（详细）
+        acc, confusion, per_class_acc, failures = evaluate_detailed(clip_model, adapter, text_features, test_loader)
         epoch_time = time.time() - t0
         best_acc = max(best_acc, acc)
+        metrics.append([epoch + 1, loss, acc])
 
         print(f"Epoch {epoch+1:2d}/{args.epochs} | Loss: {loss:.4f} | "
               f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | Time: {epoch_time:.1f}s")
@@ -295,13 +401,19 @@ def main():
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(adapter.state_dict(), save_path)
-    print(f"Model saved to {save_path}")
+    print(f"[Save] Model saved to {save_path}")
 
     # 保存日志
     log_path = save_path.with_suffix('.log')
     with open(log_path, 'w', encoding='utf-8') as f:
         f.write(logger.getvalue())
-    print(f"Log saved to {log_path}")
+    print(f"[Save] Log saved to {log_path}")
+
+    # 保存详细数据
+    save_metrics(metrics, save_path)
+    save_confusion(confusion, save_path)
+    save_per_class(per_class_acc, save_path)
+    save_failures(failures, save_path)
 
     # 恢复 stdout
     sys.stdout = logger.terminal

@@ -1,22 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-train_m2.py
-M2: CoOp (Context Optimization)
-冻结 CLIP 主干，学习连续的 prompt context vectors。
-
-参考: Zhou et al., "Learning to Prompt for Vision-Language Models", IJCV 2022
-官方代码: https://github.com/KaiyangZhou/CoOp
+train_m5.py
+M5: CoOp-LoRA (混合策略)
+同时学习可连续的 prompt context vectors (CoOp) 和在 image encoder 注入 LoRA。
 
 实现细节:
-  - Unified context (共享 across classes)，默认 16 个 context tokens
-  - Context 随机初始化: nn.init.normal_(std=0.02)
-  - Prompt 结构: [SOS] + [ctx_1] + ... + [ctx_M] + class_name + .
-  - 手动过 CLIP text encoder (transformer + ln_final + text_projection)
-  - 只优化 context vectors，CLIP 全部冻结
+  - CoOp: 16 个 learnable context tokens (同 M2)
+  - LoRA: rank=4, alpha=8, 注入 ViT attention + MLP (同 M4)
+  - 同时优化 context vectors 和 LoRA 参数
 
 用法:
-  python src/train_m2.py --epochs 20 --lr 0.002 --batch_size 64 --shots 16 --n_ctx 16
-  python src/train_m2.py --epochs 50 --lr 0.002 --batch_size 64 --n_ctx 16  # 全数据
+  python src/train_m5.py --epochs 20 --lr 0.002 --batch_size 64 --shots 16 --n_ctx 16 --rank 4 --alpha 8
+  python src/train_m5.py --epochs 10 --lr 0.002 --batch_size 64 --n_ctx 16 --rank 4 --alpha 8  # 全数据
 """
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -30,9 +25,9 @@ from io import StringIO
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import SGD
-from torch.cuda.amp import autocast, GradScaler
+from torch.optim import SGD, AdamW
 import open_clip
+from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
 from torchvision import transforms
@@ -76,10 +71,9 @@ class Logger:
         return self.buffer.getvalue()
 
 
-
 class PromptLearner(nn.Module):
     """
-    CoOp 的 Prompt Learner。
+    CoOp 的 Prompt Learner (同 M2)。
     学习连续的 context vectors，与 class name 拼接成完整 prompt。
     """
     def __init__(self, n_ctx, ctx_dim, n_cls, classnames, clip_model):
@@ -94,7 +88,6 @@ class PromptLearner(nn.Module):
         self.ctx = nn.Parameter(ctx_vectors)  # [n_ctx, ctx_dim]
 
         # 2. 预计算 SOS 和 class_name 的 embedding (冻结)
-        # 构造 prompts: "X X ... X class_name."
         prompt_prefix = " ".join(["X"] * n_ctx)
         prompts = [f"{prompt_prefix} {name}." for name in classnames]
 
@@ -102,12 +95,8 @@ class PromptLearner(nn.Module):
         with torch.no_grad():
             embedding = clip_model.token_embedding(tokenized).type(self.dtype)
 
-        # SOS token: [n_cls, 1, ctx_dim]
         self.register_buffer("token_prefix", embedding[:, :1, :])
-        # class_name + . : [n_cls, *, ctx_dim]
-        # 注意: tokenized 长度可能不同，但 embedding 已经 padding 到相同长度
         self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])
-
         self.register_buffer("tokenized_prompts", tokenized)
 
     def forward(self):
@@ -115,21 +104,18 @@ class PromptLearner(nn.Module):
         构造完整的 prompts: [SOS] + ctx + class_name + .
         返回: [n_cls, L, ctx_dim]
         """
-        # 扩展 context 到所有类别
-        ctx = self.ctx.unsqueeze(0).expand(self.n_cls, -1, -1)  # [n_cls, n_ctx, ctx_dim]
-
-        # 拼接: [SOS] + ctx + class_name + .
+        ctx = self.ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
         prompts = torch.cat([
-            self.token_prefix,  # [n_cls, 1, ctx_dim]
-            ctx,                # [n_cls, n_ctx, ctx_dim]
-            self.token_suffix,  # [n_cls, *, ctx_dim]
+            self.token_prefix,
+            ctx,
+            self.token_suffix,
         ], dim=1)
         return prompts
 
 
-class CoOpModel(nn.Module):
+class CoOpLoRAModel(nn.Module):
     """
-    完整的 CoOp 模型: CLIP image encoder + learnable prompt text encoder。
+    完整的 CoOp-LoRA 模型: CLIP image encoder (with LoRA) + learnable prompt text encoder。
     """
     def __init__(self, clip_model, prompt_learner):
         super().__init__()
@@ -141,35 +127,26 @@ class CoOpModel(nn.Module):
         """
         返回 logits: [batch_size, n_cls]
         """
-        # Image features (冻结 CLIP)
+        # Image features (with LoRA)
         image_features = self.clip_model.encode_image(image.type(self.dtype))
         image_features = F.normalize(image_features, dim=-1)
 
         # Text features with learnable prompts
-        prompts = self.prompt_learner()  # [n_cls, L, ctx_dim]
+        prompts = self.prompt_learner()
 
         # 手动过 text encoder
-        # 1. 加 positional embedding
         x = prompts + self.clip_model.positional_embedding.type(self.dtype)
-
-        # 2. Transformer: NLD -> LND
-        x = x.permute(1, 0, 2)  # [L, n_cls, ctx_dim]
+        x = x.permute(1, 0, 2)
         x = self.clip_model.transformer(x)
-        x = x.permute(1, 0, 2)  # [n_cls, L, ctx_dim]
-
-        # 3. LayerNorm
+        x = x.permute(1, 0, 2)
         x = self.clip_model.ln_final(x).type(self.dtype)
 
-        # 4. 取 EOT token (end-of-text)
-        # EOT token 的位置: tokenized_prompts 中最大的值对应的位置
         eot_indices = self.prompt_learner.tokenized_prompts.argmax(dim=-1)
-        x = x[torch.arange(x.shape[0]), eot_indices]  # [n_cls, ctx_dim]
+        x = x[torch.arange(x.shape[0]), eot_indices]
 
-        # 5. Text projection
         text_features = x @ self.clip_model.text_projection
         text_features = F.normalize(text_features, dim=-1)
 
-        # 6. 相似度
         logit_scale = self.clip_model.logit_scale.exp()
         logits = logit_scale * image_features @ text_features.t()
 
@@ -235,31 +212,35 @@ def load_data(batch_size=64, shots_per_class=None):
     return train_loader, test_loader
 
 
-def load_clip():
+def load_clip_with_lora(rank=4, alpha=8):
+    """加载 CLIP 并在 image encoder 上注入 LoRA。"""
     print(f"[Model] Loading CLIP ViT-B/32 (openai) on {DEVICE} ...")
     model, _, _ = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained="openai", quick_gelu=True,
     )
-    model = model.to(DEVICE).eval()
+    model = model.to(DEVICE)
+    
+    # 冻结所有参数
     for p in model.parameters():
         p.requires_grad = False
+    
+    # 配置 LoRA (只注入 image encoder)
+    lora_config = LoraConfig(
+        r=rank,
+        lora_alpha=alpha,
+        target_modules=["in_proj", "out_proj", "c_fc", "c_proj"],
+        lora_dropout=0.0,
+        bias="none",
+    )
+    
+    model.visual = get_peft_model(model.visual, lora_config)
+    
     n_total = sum(p.numel() for p in model.parameters())
-    print(f"[Model] CLIP total params: {n_total/1e6:.1f}M (frozen)")
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[Model] CLIP total params: {n_total/1e6:.1f}M")
+    print(f"[Model] LoRA trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
+    
     return model
-
-
-@torch.no_grad()
-def evaluate(model, test_loader):
-    model.eval()
-    correct, total = 0, 0
-    for images, labels in test_loader:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        with torch.amp.autocast('cuda'):
-            logits = model(images)
-        preds = logits.argmax(dim=-1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-    return 100.0 * correct / total
 
 
 def evaluate_detailed(model, test_loader):
@@ -376,12 +357,15 @@ def train_epoch(model, train_loader, optimizer, scaler, criterion):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=0.002, help="SGD learning rate (CoOp default)")
+    parser.add_argument("--lr", type=float, default=0.002, help="SGD learning rate for CoOp context")
+    parser.add_argument("--lora_lr", type=float, default=1e-3, help="AdamW learning rate for LoRA")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--shots", type=int, default=None, help="Few-shot: shots per class")
     parser.add_argument("--n_ctx", type=int, default=16, help="Number of context tokens")
+    parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
+    parser.add_argument("--alpha", type=int, default=8, help="LoRA alpha")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--save", type=str, default="outputs/m2_coop.pt")
+    parser.add_argument("--save", type=str, default="outputs/m5_coop_lora.pt")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -393,21 +377,22 @@ def main():
     sys.stdout = logger
 
     print("=" * 60)
-    print("M2: CoOp (Context Optimization)")
-    print(f"Epochs: {args.epochs} | LR: {args.lr} | Batch: {args.batch_size} | Shots: {args.shots or 'full'} | N_CTX: {args.n_ctx}")
+    print("M5: CoOp-LoRA (Hybrid Strategy)")
+    print(f"Epochs: {args.epochs} | CoOp LR: {args.lr} | LoRA LR: {args.lora_lr} | Batch: {args.batch_size} | Shots: {args.shots or 'full'}")
+    print(f"N_CTX: {args.n_ctx} | LoRA rank: {args.rank} | alpha: {args.alpha}")
     print("=" * 60)
 
     # 加载数据
     train_loader, test_loader = load_data(args.batch_size, args.shots)
 
-    # 加载 CLIP
-    clip_model = load_clip()
+    # 加载 CLIP + LoRA
+    clip_model = load_clip_with_lora(rank=args.rank, alpha=args.alpha)
 
     # 获取 context dimension
     ctx_dim = clip_model.token_embedding.weight.shape[1]
     print(f"[Model] Context dimension: {ctx_dim}")
 
-    # 创建 Prompt Learner
+    # 创建 Prompt Learner (CoOp)
     prompt_learner = PromptLearner(
         n_ctx=args.n_ctx,
         ctx_dim=ctx_dim,
@@ -416,14 +401,28 @@ def main():
         clip_model=clip_model,
     ).to(DEVICE)
 
-    n_trainable = sum(p.numel() for p in prompt_learner.parameters() if p.requires_grad)
-    print(f"[Model] PromptLearner params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
+    n_ctx_params = sum(p.numel() for p in prompt_learner.parameters() if p.requires_grad)
+    print(f"[Model] PromptLearner params: {n_ctx_params:,} ({n_ctx_params/1e3:.1f}K)")
 
     # 创建完整模型
-    model = CoOpModel(clip_model, prompt_learner).to(DEVICE)
+    model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
 
-    # 只优化 prompt_learner
-    optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    # 收集可训练参数
+    # 1. CoOp context vectors -> SGD
+    ctx_params = list(prompt_learner.parameters())
+    # 2. LoRA params -> AdamW
+    lora_params = [p for p in clip_model.parameters() if p.requires_grad]
+    
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[Model] Total trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
+
+    # 使用两个优化器（或一个联合优化器）
+    # 方案：使用一个 AdamW 优化器同时优化两者
+    optimizer = AdamW([
+        {'params': ctx_params, 'lr': args.lr, 'weight_decay': 5e-4},
+        {'params': lora_params, 'lr': args.lora_lr, 'weight_decay': 1e-4},
+    ])
+    
     scaler = torch.amp.GradScaler('cuda')
     criterion = nn.CrossEntropyLoss()
 
@@ -456,8 +455,20 @@ def main():
     # 保存模型
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(prompt_learner.state_dict(), save_path)
-    print(f"[Save] Model saved to {save_path}")
+    
+    # 保存 CoOp context
+    coop_path = save_path.with_suffix('').with_name(save_path.stem + '_coop.pt')
+    torch.save(prompt_learner.state_dict(), coop_path)
+    print(f"[Save] CoOp context saved to {coop_path}")
+    
+    # 保存 LoRA 参数
+    lora_path = save_path.with_suffix('').with_name(save_path.stem + '_lora.pt')
+    lora_state = {}
+    for name, param in clip_model.named_parameters():
+        if param.requires_grad:
+            lora_state[name] = param.data.cpu()
+    torch.save(lora_state, lora_path)
+    print(f"[Save] LoRA weights saved to {lora_path}")
 
     # 保存日志
     log_path = save_path.with_suffix('.log')
