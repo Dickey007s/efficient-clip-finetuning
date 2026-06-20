@@ -139,7 +139,7 @@ def load_clip_with_lora(rank=4, alpha=8):
     """加载 CLIP 并在 image encoder 上注入 LoRA。"""
     print(f"[Model] Loading CLIP ViT-B/32 (openai) on {DEVICE} ...")
     model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-B-32", pretrained="openai", quick_gelu=True,
+        "ViT-B-32", pretrained="openai", force_quick_gelu=True,
     )
     model = model.to(DEVICE)
 

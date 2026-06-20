@@ -136,7 +136,7 @@ def load_data(batch_size=64, shots_per_class=None):
 def load_clip():
     print(f"[Model] Loading CLIP ViT-B/32 (openai) on {DEVICE} ...")
     model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-B-32", pretrained="openai", quick_gelu=True,
+        "ViT-B-32", pretrained="openai", force_quick_gelu=True,
     )
     model = model.to(DEVICE).eval()
     for p in model.parameters():

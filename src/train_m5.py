@@ -209,7 +209,7 @@ def load_data(batch_size=64, shots_per_class=None):
 def load_clip():
     print(f"[Model] Loading CLIP ViT-B/32 (openai) on {DEVICE} ...")
     model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-B-32", pretrained="openai", quick_gelu=True,
+        "ViT-B-32", pretrained="openai", force_quick_gelu=True,
     )
     model = model.to(DEVICE)
     for p in model.parameters():
@@ -393,7 +393,10 @@ def main():
         torch.save(prompt_learner.state_dict(), coop_path)
         print(f"[Stage 1] CoOp prompt saved to {coop_path}")
     else:
-        print("[Stage 1] Skipped (coop_epochs=0 and no coop_ckpt)")
+        raise ValueError(
+            "M5 requires either --coop_epochs > 0 or --coop_ckpt. "
+            "Training with random initialized prompt + LoRA is not allowed."
+        )
 
     # ========== Stage 2: LoRA Fine-tuning ==========
     # 冻结 prompt，注入 LoRA 到 image encoder
