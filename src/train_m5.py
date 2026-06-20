@@ -27,7 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import SGD, AdamW
 import open_clip
-from peft import LoraConfig, get_peft_model
+from lora_utils import inject_lora_into_visual
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
 from torchvision import transforms
@@ -219,22 +219,16 @@ def load_clip_with_lora(rank=4, alpha=8):
         "ViT-B-32", pretrained="openai", quick_gelu=True,
     )
     model = model.to(DEVICE)
-    
+
     # 冻结所有参数
     for p in model.parameters():
         p.requires_grad = False
-    
-    # 配置 LoRA (只注入 image encoder)
-    lora_config = LoraConfig(
-        r=rank,
-        lora_alpha=alpha,
-        target_modules=["in_proj", "out_proj", "c_fc", "c_proj"],
-        lora_dropout=0.0,
-        bias="none",
-    )
-    
-    model.visual = get_peft_model(model.visual, lora_config)
-    
+
+    # 注入完整 LoRA 到 image encoder (Q/K/V/out_proj + c_fc/c_proj)
+    # 用自定义 AttentionWithLoRA 替换 MHA，解决 in_proj 无法被 peft 匹配的问题
+    print(f"[Model] Injecting LoRA (rank={rank}, alpha={alpha}) into ViT...")
+    inject_lora_into_visual(model.visual, rank=rank, alpha=alpha)
+
     n_total = sum(p.numel() for p in model.parameters())
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[Model] CLIP total params: {n_total/1e6:.1f}M")
