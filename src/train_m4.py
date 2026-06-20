@@ -2,15 +2,17 @@
 """
 train_m4.py
 M4: LoRA (Low-Rank Adaptation) on CLIP image encoder
-使用 PEFT 库在 CLIP ViT 的 attention 和 MLP 层注入 LoRA，冻结原始权重。
+在 CLIP ViT 的 Q/V attention 投影注入低秩适配器，冻结原始权重。
 
 参考: Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models", ICLR 2022
 
 实现细节:
-  - 使用 peft.LoraConfig 配置 LoRA
-  - target_modules: qkv (in_proj), out_proj, c_fc, c_proj
-  - rank=4, alpha=8, dropout=0.0
+  - 对 ViT attention 的 q_proj 和 v_proj 注入 LoRA（标准做法）
+  - k_proj 和 out_proj 保持冻结
+  - MLP (c_fc/c_proj) 不注入 LoRA
+  - rank=4, alpha=8 (scaling = alpha / rank = 2.0)
   - 只训练 LoRA 参数，原始 CLIP 权重冻结
+  - 使用自定义 lora_utils 解决 peft 无法匹配 in_proj 的问题
 
 用法:
   python src/train_m4.py --epochs 20 --lr 1e-3 --batch_size 64 --shots 16 --rank 4 --alpha 8

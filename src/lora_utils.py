@@ -48,9 +48,8 @@ class LoRALinear(nn.Module):
 
 class AttentionWithLoRA(nn.Module):
     """
-    手动实现的多头注意力，Q/K/V/output 各挂 LoRA，行为等价于原
-    MultiheadAttention (same weights, same scaling)，但每个投影都是
-    独立的 nn.Linear，可以被 LoRA 正常适配。
+    手动实现的多头注意力，Q/V 挂 LoRA（标准 LoRA-CLIP 做法），
+    K 和 out_proj 保持冻结。行为等价于原 MultiheadAttention。
 
     open_clip 的 ViT 使用 batch_first=True，输入/输出均为 [N, L, D]。
     forward 调用约定与 nn.MultiheadAttention 一致，返回 (output, None)，
@@ -64,36 +63,40 @@ class AttentionWithLoRA(nn.Module):
         device = mha.in_proj_weight.device
 
         # 从融合的 in_proj_weight 拆出 q/k/v
-        # in_proj_weight: [3*dim, dim] -> [Wq; Wk; Wv], 每段 [dim, dim]
         W = mha.in_proj_weight  # [3d, d]
         b = mha.in_proj_bias    # [3d] or None
         d = self.embed_dim
 
-        def make_linear(Wseg, bseg):
+        def make_linear(Wseg, bseg, trainable=False):
             lin = nn.Linear(d, d, bias=bseg is not None).to(device)
             with torch.no_grad():
                 lin.weight.copy_(Wseg)
                 if bseg is not None:
                     lin.bias.copy_(bseg)
+            for p in lin.parameters():
+                p.requires_grad = trainable
             return lin
 
-        q_lin = make_linear(W[:d], b[:d] if b is not None else None)
-        k_lin = make_linear(W[d:2*d], b[d:2*d] if b is not None else None)
-        v_lin = make_linear(W[2*d:], b[2*d:] if b is not None else None)
+        # Q 和 V 挂 LoRA（可训练），K 冻结
+        q_lin = make_linear(W[:d], b[:d] if b is not None else None, trainable=True)
+        k_lin = make_linear(W[d:2*d], b[d:2*d] if b is not None else None, trainable=False)
+        v_lin = make_linear(W[2*d:], b[2*d:] if b is not None else None, trainable=True)
 
-        # 原 out_proj 是 NonDynamicallyQuantizableLinear (nn.Linear 子类)
+        # out_proj 冻结（不挂 LoRA）
         out_lin = nn.Linear(self.embed_dim, self.embed_dim,
                             bias=mha.out_proj.bias is not None).to(device)
         with torch.no_grad():
             out_lin.weight.copy_(mha.out_proj.weight)
             if mha.out_proj.bias is not None:
                 out_lin.bias.copy_(mha.out_proj.bias)
+        for p in out_lin.parameters():
+            p.requires_grad = False
 
-        # 各挂 LoRA
+        # 只给 Q 和 V 挂 LoRA
         self.q_proj = LoRALinear(q_lin, rank=rank, alpha=alpha)
-        self.k_proj = LoRALinear(k_lin, rank=rank, alpha=alpha)
+        self.k_proj = k_lin  # 裸 Linear，冻结
         self.v_proj = LoRALinear(v_lin, rank=rank, alpha=alpha)
-        self.out_proj = LoRALinear(out_lin, rank=rank, alpha=alpha)
+        self.out_proj = out_lin  # 裸 Linear，冻结
 
     def forward(self, query, key, value, need_weights=False, attn_mask=None):
         """
@@ -101,7 +104,6 @@ class AttentionWithLoRA(nn.Module):
         query/key/value: [N, L, D]（ViT 自注意力时三者相同）
         返回: (output [N, L, D], None)  兼容 [0] 取值
         """
-        # ViT 自注意力，无 causal mask；attn_mask 为 None
         N, L, D = query.shape
         h = self.num_heads
         dh = self.head_dim
@@ -121,9 +123,9 @@ class AttentionWithLoRA(nn.Module):
 
 def inject_lora_into_visual(visual_model, rank=4, alpha=8):
     """
-    在 CLIP visual (VisionTransformer) 上注入完整 LoRA：
-      - attn (Q/K/V/out) 用 AttentionWithLoRA 替换
-      - mlp (c_fc/c_proj) 挂 LoRALinear
+    在 CLIP visual (VisionTransformer) 上注入轻量 LoRA（只适配 Q/V attention）：
+      - attn: 替换为 AttentionWithLoRA（Q/V 有 LoRA，K/out 冻结）
+      - mlp: 保持原样，不注入 LoRA
     所有原始权重保持冻结，只训练 LoRA 分支。
     返回 LoRA 参数列表。
     """
@@ -131,16 +133,10 @@ def inject_lora_into_visual(visual_model, rank=4, alpha=8):
     lora_params = []
 
     for block in blocks:
-        # 替换 attention
+        # 替换 attention（只 Q/V 有 LoRA）
         old_attn = block.attn
         new_attn = AttentionWithLoRA(old_attn, rank=rank, alpha=alpha)
         block.attn = new_attn
-
-        # MLP 的 c_fc / c_proj 挂 LoRA
-        mlp = block.mlp
-        # open_clip MLP: Sequential(c_fc, gelu, c_proj)
-        mlp.c_fc = LoRALinear(mlp.c_fc, rank=rank, alpha=alpha)
-        mlp.c_proj = LoRALinear(mlp.c_proj, rank=rank, alpha=alpha)
 
     # 冻结所有非 LoRA 参数
     for p in visual_model.parameters():

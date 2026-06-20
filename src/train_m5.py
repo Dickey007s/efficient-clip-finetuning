@@ -1,17 +1,34 @@
 # -*- coding: utf-8 -*-
 """
 train_m5.py
-M5: CoOp-LoRA (混合策略)
-同时学习可连续的 prompt context vectors (CoOp) 和在 image encoder 注入 LoRA。
+M5: CoOp-LoRA (两阶段混合策略)
+
+Stage 1: CoOp warm-up — 训练 learnable context vectors，CLIP 全部冻结
+Stage 2: LoRA fine-tuning — 冻结 Stage 1 的 prompt，只训练 image encoder 的 LoRA (Q/V)
+
+参考:
+  - Zhou et al., "Learning to Prompt for Vision-Language Models", IJCV 2022 (CoOp)
+  - Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models", ICLR 2022 (LoRA)
 
 实现细节:
-  - CoOp: 16 个 learnable context tokens (同 M2)
-  - LoRA: rank=4, alpha=8, 注入 ViT attention + MLP (同 M4)
-  - 同时优化 context vectors 和 LoRA 参数
+  - 先跑 M2 (CoOp) 得到 warm-up prompt，或直接在本脚本内做两阶段
+  - 本脚本默认执行完整两阶段：先 CoOp epochs，再 LoRA epochs
+  - 也可通过 --coop_ckpt 加载预训练 CoOp prompt，跳过 Stage 1
+  - LoRA: 只注入 Q/V attention (rank=4, alpha=8)，约 147K 参数
 
 用法:
-  python src/train_m5.py --epochs 20 --lr 0.002 --batch_size 64 --shots 16 --n_ctx 16 --rank 4 --alpha 8
-  python src/train_m5.py --epochs 10 --lr 0.002 --batch_size 64 --n_ctx 16 --rank 4 --alpha 8  # 全数据
+  # 完整两阶段（16-shot）
+  python src/train_m5.py --coop_epochs 20 --lora_epochs 10 --lr 0.002 --lora_lr 1e-4 \\
+      --batch_size 64 --shots 16 --n_ctx 16 --rank 4 --alpha 8 --save outputs/m5_16shot.pt
+
+  # 只 Stage 2（加载预训练 CoOp）
+  python src/train_m5.py --coop_epochs 0 --lora_epochs 10 --lora_lr 1e-4 \\
+      --batch_size 64 --shots 16 --coop_ckpt outputs/m2_16shot.pt \\
+      --rank 4 --alpha 8 --save outputs/m5_16shot.pt
+
+  # 全数据
+  python src/train_m5.py --coop_epochs 50 --lora_epochs 10 --lr 0.002 --lora_lr 1e-4 \\
+      --batch_size 64 --n_ctx 16 --rank 4 --alpha 8 --save outputs/m5_full.pt
 """
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -72,22 +89,17 @@ class Logger:
 
 
 class PromptLearner(nn.Module):
-    """
-    CoOp 的 Prompt Learner (同 M2)。
-    学习连续的 context vectors，与 class name 拼接成完整 prompt。
-    """
+    """CoOp 的 Prompt Learner。"""
     def __init__(self, n_ctx, ctx_dim, n_cls, classnames, clip_model):
         super().__init__()
         self.n_ctx = n_ctx
         self.n_cls = n_cls
         self.dtype = clip_model.token_embedding.weight.dtype
 
-        # 1. 随机初始化 context vectors (unified context，共享)
         ctx_vectors = torch.empty(n_ctx, ctx_dim, dtype=self.dtype)
         nn.init.normal_(ctx_vectors, std=0.02)
-        self.ctx = nn.Parameter(ctx_vectors)  # [n_ctx, ctx_dim]
+        self.ctx = nn.Parameter(ctx_vectors)
 
-        # 2. 预计算 SOS 和 class_name 的 embedding (冻结)
         prompt_prefix = " ".join(["X"] * n_ctx)
         prompts = [f"{prompt_prefix} {name}." for name in classnames]
 
@@ -100,23 +112,13 @@ class PromptLearner(nn.Module):
         self.register_buffer("tokenized_prompts", tokenized)
 
     def forward(self):
-        """
-        构造完整的 prompts: [SOS] + ctx + class_name + .
-        返回: [n_cls, L, ctx_dim]
-        """
         ctx = self.ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
-        prompts = torch.cat([
-            self.token_prefix,
-            ctx,
-            self.token_suffix,
-        ], dim=1)
+        prompts = torch.cat([self.token_prefix, ctx, self.token_suffix], dim=1)
         return prompts
 
 
 class CoOpLoRAModel(nn.Module):
-    """
-    完整的 CoOp-LoRA 模型: CLIP image encoder (with LoRA) + learnable prompt text encoder。
-    """
+    """CoOp-LoRA 完整模型。"""
     def __init__(self, clip_model, prompt_learner):
         super().__init__()
         self.clip_model = clip_model
@@ -124,17 +126,10 @@ class CoOpLoRAModel(nn.Module):
         self.dtype = clip_model.token_embedding.weight.dtype
 
     def forward(self, image):
-        """
-        返回 logits: [batch_size, n_cls]
-        """
-        # Image features (with LoRA)
         image_features = self.clip_model.encode_image(image.type(self.dtype))
         image_features = F.normalize(image_features, dim=-1)
 
-        # Text features with learnable prompts
         prompts = self.prompt_learner()
-
-        # 手动过 text encoder
         x = prompts + self.clip_model.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)
         x = self.clip_model.transformer(x)
@@ -149,7 +144,6 @@ class CoOpLoRAModel(nn.Module):
 
         logit_scale = self.clip_model.logit_scale.exp()
         logits = logit_scale * image_features @ text_features.t()
-
         return logits
 
 
@@ -212,35 +206,20 @@ def load_data(batch_size=64, shots_per_class=None):
     return train_loader, test_loader
 
 
-def load_clip_with_lora(rank=4, alpha=8):
-    """加载 CLIP 并在 image encoder 上注入 LoRA。"""
+def load_clip():
     print(f"[Model] Loading CLIP ViT-B/32 (openai) on {DEVICE} ...")
     model, _, _ = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained="openai", quick_gelu=True,
     )
     model = model.to(DEVICE)
-
-    # 冻结所有参数
     for p in model.parameters():
         p.requires_grad = False
-
-    # 注入完整 LoRA 到 image encoder (Q/K/V/out_proj + c_fc/c_proj)
-    # 用自定义 AttentionWithLoRA 替换 MHA，解决 in_proj 无法被 peft 匹配的问题
-    print(f"[Model] Injecting LoRA (rank={rank}, alpha={alpha}) into ViT...")
-    inject_lora_into_visual(model.visual, rank=rank, alpha=alpha)
-
     n_total = sum(p.numel() for p in model.parameters())
-    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[Model] CLIP total params: {n_total/1e6:.1f}M")
-    print(f"[Model] LoRA trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
-    
+    print(f"[Model] CLIP total params: {n_total/1e6:.1f}M (frozen)")
     return model
 
 
 def evaluate_detailed(model, test_loader):
-    """
-    详细评估：返回准确率、混淆矩阵、每类准确率、失败案例。
-    """
     model.eval()
     correct, total = 0, 0
     all_preds = []
@@ -259,77 +238,23 @@ def evaluate_detailed(model, test_loader):
             
             all_preds.extend(preds.cpu().tolist())
             all_labels.extend(labels.cpu().tolist())
-            # 记录全局索引（近似）
             start_idx = batch_idx * test_loader.batch_size
             all_indices.extend(range(start_idx, start_idx + len(labels)))
     
     acc = 100.0 * correct / total
-    
-    # 混淆矩阵
     num_classes = 43
     confusion = torch.zeros(num_classes, num_classes, dtype=torch.long)
     for t, p in zip(all_labels, all_preds):
         confusion[t, p] += 1
     
-    # 每类准确率
     per_class_acc = {}
     for c in range(num_classes):
         class_total = confusion[c].sum().item()
         class_correct = confusion[c, c].item()
         per_class_acc[c] = 100.0 * class_correct / class_total if class_total > 0 else 0.0
     
-    # 失败案例
     failures = [(idx, t, p) for idx, t, p in zip(all_indices, all_labels, all_preds) if t != p]
-    
     return acc, confusion, per_class_acc, failures
-
-
-def save_metrics(metrics, save_path):
-    """保存训练曲线数据：epoch, loss, test_acc。"""
-    import csv
-    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_metrics.csv')
-    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(['epoch', 'loss', 'test_acc'])
-        for row in metrics:
-            writer.writerow(row)
-    print(f"[Save] Metrics saved to {csv_path}")
-
-
-def save_confusion(confusion, save_path):
-    """保存混淆矩阵为 CSV。"""
-    import csv
-    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_confusion.csv')
-    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(['true_class'] + [f'pred_{i}' for i in range(43)])
-        for i in range(43):
-            writer.writerow([i] + confusion[i].tolist())
-    print(f"[Save] Confusion matrix saved to {csv_path}")
-
-
-def save_per_class(per_class_acc, save_path):
-    """保存每类准确率为 CSV。"""
-    import csv
-    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_per_class.csv')
-    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(['class_id', 'class_name', 'accuracy'])
-        for c in range(43):
-            writer.writerow([c, CLASS_NAMES[c], f"{per_class_acc[c]:.2f}"])
-    print(f"[Save] Per-class accuracy saved to {csv_path}")
-
-
-def save_failures(failures, save_path, max_samples=100):
-    """保存失败案例为 CSV。"""
-    import csv
-    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_failures.csv')
-    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(['image_idx', 'true_label', 'true_name', 'pred_label', 'pred_name'])
-        for idx, t, p in failures[:max_samples]:
-            writer.writerow([idx, t, CLASS_NAMES[t], p, CLASS_NAMES[p]])
-    print(f"[Save] Failures ({min(len(failures), max_samples)} samples) saved to {csv_path}")
 
 
 def train_epoch(model, train_loader, optimizer, scaler, criterion):
@@ -348,16 +273,62 @@ def train_epoch(model, train_loader, optimizer, scaler, criterion):
     return total_loss / len(train_loader)
 
 
+def save_metrics(metrics, save_path):
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_metrics.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['epoch', 'loss', 'test_acc'])
+        for row in metrics:
+            writer.writerow(row)
+    print(f"[Save] Metrics saved to {csv_path}")
+
+
+def save_confusion(confusion, save_path):
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_confusion.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['true_class'] + [f'pred_{i}' for i in range(43)])
+        for i in range(43):
+            writer.writerow([i] + confusion[i].tolist())
+    print(f"[Save] Confusion matrix saved to {csv_path}")
+
+
+def save_per_class(per_class_acc, save_path):
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_per_class.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['class_id', 'class_name', 'accuracy'])
+        for c in range(43):
+            writer.writerow([c, CLASS_NAMES[c], f"{per_class_acc[c]:.2f}"])
+    print(f"[Save] Per-class accuracy saved to {csv_path}")
+
+
+def save_failures(failures, save_path, max_samples=100):
+    import csv
+    csv_path = save_path.with_suffix('').with_name(save_path.stem + '_failures.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['image_idx', 'true_label', 'true_name', 'pred_label', 'pred_name'])
+        for idx, t, p in failures[:max_samples]:
+            writer.writerow([idx, t, CLASS_NAMES[t], p, CLASS_NAMES[p]])
+    print(f"[Save] Failures ({min(len(failures), max_samples)} samples) saved to {csv_path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=0.002, help="SGD learning rate for CoOp context")
-    parser.add_argument("--lora_lr", type=float, default=1e-3, help="AdamW learning rate for LoRA")
+    parser.add_argument("--coop_epochs", type=int, default=20, help="Stage 1: CoOp warm-up epochs")
+    parser.add_argument("--lora_epochs", type=int, default=10, help="Stage 2: LoRA fine-tuning epochs")
+    parser.add_argument("--lr", type=float, default=0.002, help="Stage 1 CoOp LR")
+    parser.add_argument("--lora_lr", type=float, default=1e-4, help="Stage 2 LoRA LR")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--shots", type=int, default=None, help="Few-shot: shots per class")
     parser.add_argument("--n_ctx", type=int, default=16, help="Number of context tokens")
     parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
     parser.add_argument("--alpha", type=int, default=8, help="LoRA alpha")
+    parser.add_argument("--coop_ckpt", type=str, default=None, help="预训练 CoOp checkpoint 路径，加载则跳过 Stage 1")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save", type=str, default="outputs/m5_coop_lora.pt")
     args = parser.parse_args()
@@ -366,117 +337,135 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
 
-    # 重定向 stdout 到 Logger
     logger = Logger()
     sys.stdout = logger
 
     print("=" * 60)
-    print("M5: CoOp-LoRA (Hybrid Strategy)")
-    print(f"Epochs: {args.epochs} | CoOp LR: {args.lr} | LoRA LR: {args.lora_lr} | Batch: {args.batch_size} | Shots: {args.shots or 'full'}")
-    print(f"N_CTX: {args.n_ctx} | LoRA rank: {args.rank} | alpha: {args.alpha}")
+    print("M5: CoOp-LoRA (Two-Stage)")
+    print(f"CoOp epochs: {args.coop_epochs} | LoRA epochs: {args.lora_epochs}")
+    print(f"CoOp LR: {args.lr} | LoRA LR: {args.lora_lr} | Batch: {args.batch_size}")
+    print(f"Shots: {args.shots or 'full'} | N_CTX: {args.n_ctx} | LoRA rank: {args.rank} | alpha: {args.alpha}")
     print("=" * 60)
 
     # 加载数据
     train_loader, test_loader = load_data(args.batch_size, args.shots)
 
-    # 加载 CLIP + LoRA
-    clip_model = load_clip_with_lora(rank=args.rank, alpha=args.alpha)
+    # 加载 CLIP（全部冻结）
+    clip_model = load_clip()
 
-    # 获取 context dimension
+    # 创建 PromptLearner
     ctx_dim = clip_model.token_embedding.weight.shape[1]
-    print(f"[Model] Context dimension: {ctx_dim}")
-
-    # 创建 Prompt Learner (CoOp)
     prompt_learner = PromptLearner(
-        n_ctx=args.n_ctx,
-        ctx_dim=ctx_dim,
-        n_cls=43,
-        classnames=CLASS_NAMES,
-        clip_model=clip_model,
+        n_ctx=args.n_ctx, ctx_dim=ctx_dim, n_cls=43,
+        classnames=CLASS_NAMES, clip_model=clip_model,
     ).to(DEVICE)
 
-    n_ctx_params = sum(p.numel() for p in prompt_learner.parameters() if p.requires_grad)
-    print(f"[Model] PromptLearner params: {n_ctx_params:,} ({n_ctx_params/1e3:.1f}K)")
+    # ========== Stage 1: CoOp Warm-up ==========
+    if args.coop_ckpt is not None and Path(args.coop_ckpt).exists():
+        print(f"\n[Stage 1] Loading pre-trained CoOp from {args.coop_ckpt}")
+        prompt_learner.load_state_dict(torch.load(args.coop_ckpt, map_location=DEVICE))
+        print("[Stage 1] CoOp prompt loaded, skipping warm-up.")
+    elif args.coop_epochs > 0:
+        print(f"\n{'='*60}")
+        print("Stage 1: CoOp Warm-up (training context vectors)")
+        print(f"{'='*60}")
+        
+        model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
+        optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        scaler = torch.amp.GradScaler('cuda')
+        criterion = nn.CrossEntropyLoss()
+        
+        best_acc = 0.0
+        for epoch in range(args.coop_epochs):
+            t0 = time.time()
+            loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
+            acc, _, _, _ = evaluate_detailed(model, test_loader)
+            epoch_time = time.time() - t0
+            best_acc = max(best_acc, acc)
+            print(f"Epoch {epoch+1:2d}/{args.coop_epochs} | Loss: {loss:.4f} | "
+                  f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | Time: {epoch_time:.1f}s")
+        
+        print(f"[Stage 1] Best CoOp accuracy: {best_acc:.2f}%")
+        
+        # 保存 Stage 1 的 prompt
+        coop_path = Path(args.save).with_suffix('').with_name(Path(args.save).stem + '_stage1_coop.pt')
+        coop_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(prompt_learner.state_dict(), coop_path)
+        print(f"[Stage 1] CoOp prompt saved to {coop_path}")
+    else:
+        print("[Stage 1] Skipped (coop_epochs=0 and no coop_ckpt)")
 
-    # 创建完整模型
+    # ========== Stage 2: LoRA Fine-tuning ==========
+    # 冻结 prompt，注入 LoRA 到 image encoder
+    for p in prompt_learner.parameters():
+        p.requires_grad = False
+    print(f"\n{'='*60}")
+    print("Stage 2: LoRA Fine-tuning (prompt frozen)")
+    print(f"{'='*60}")
+    
+    print(f"[Model] Injecting LoRA (rank={args.rank}, alpha={args.alpha}) into ViT...")
+    inject_lora_into_visual(clip_model.visual, rank=args.rank, alpha=args.alpha)
+    
+    n_trainable = sum(p.numel() for p in clip_model.parameters() if p.requires_grad)
+    print(f"[Model] LoRA trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
+
     model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
-
-    # 收集可训练参数
-    # 1. CoOp context vectors -> SGD
-    ctx_params = list(prompt_learner.parameters())
-    # 2. LoRA params -> AdamW
+    
+    # 只优化 LoRA 参数
     lora_params = [p for p in clip_model.parameters() if p.requires_grad]
-    
-    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[Model] Total trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
-
-    # 使用两个优化器（或一个联合优化器）
-    # 方案：使用一个 AdamW 优化器同时优化两者
-    optimizer = AdamW([
-        {'params': ctx_params, 'lr': args.lr, 'weight_decay': 5e-4},
-        {'params': lora_params, 'lr': args.lora_lr, 'weight_decay': 1e-4},
-    ])
-    
+    optimizer = AdamW(lora_params, lr=args.lora_lr, weight_decay=1e-4)
     scaler = torch.amp.GradScaler('cuda')
     criterion = nn.CrossEntropyLoss()
-
-    # 训练循环
+    
     best_acc = 0.0
     t_start = time.time()
-    metrics = []  # [epoch, loss, test_acc]
-
-    for epoch in range(args.epochs):
+    metrics = []
+    
+    for epoch in range(args.lora_epochs):
         t0 = time.time()
         loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
-        
-        # 评估（详细）
         acc, confusion, per_class_acc, failures = evaluate_detailed(model, test_loader)
         epoch_time = time.time() - t0
         best_acc = max(best_acc, acc)
         metrics.append([epoch + 1, loss, acc])
-
-        print(f"Epoch {epoch+1:2d}/{args.epochs} | Loss: {loss:.4f} | "
+        
+        print(f"Epoch {epoch+1:2d}/{args.lora_epochs} | Loss: {loss:.4f} | "
               f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | Time: {epoch_time:.1f}s")
-
+    
     total_time = time.time() - t_start
     print("=" * 60)
     print(f"Final Best Accuracy: {best_acc:.2f}%")
-    print(f"Total time: {total_time:.1f}s")
+    print(f"Stage 2 time: {total_time:.1f}s")
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() / 1024**3
         print(f"Peak GPU memory: {alloc:.2f} GB")
-
-    # 保存模型
+    
+    # 保存
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # 保存 CoOp context
-    coop_path = save_path.with_suffix('').with_name(save_path.stem + '_coop.pt')
-    torch.save(prompt_learner.state_dict(), coop_path)
-    print(f"[Save] CoOp context saved to {coop_path}")
-    
-    # 保存 LoRA 参数
+    # 保存 LoRA
     lora_path = save_path.with_suffix('').with_name(save_path.stem + '_lora.pt')
-    lora_state = {}
-    for name, param in clip_model.named_parameters():
-        if param.requires_grad:
-            lora_state[name] = param.data.cpu()
+    lora_state = {n: p.data.cpu() for n, p in clip_model.named_parameters() if p.requires_grad}
     torch.save(lora_state, lora_path)
     print(f"[Save] LoRA weights saved to {lora_path}")
-
-    # 保存日志
+    
+    # 保存 frozen prompt
+    coop_path = save_path.with_suffix('').with_name(save_path.stem + '_coop.pt')
+    torch.save(prompt_learner.state_dict(), coop_path)
+    print(f"[Save] Frozen CoOp prompt saved to {coop_path}")
+    
+    # 保存日志和 CSV
     log_path = save_path.with_suffix('.log')
     with open(log_path, 'w', encoding='utf-8') as f:
         f.write(logger.getvalue())
     print(f"[Save] Log saved to {log_path}")
-
-    # 保存详细数据
+    
     save_metrics(metrics, save_path)
     save_confusion(confusion, save_path)
     save_per_class(per_class_acc, save_path)
     save_failures(failures, save_path)
-
-    # 恢复 stdout
+    
     sys.stdout = logger.terminal
 
 
