@@ -1,93 +1,97 @@
-# Efficient Fine-Tuning of CLIP for Traffic Sign Recognition: A Comparative Study
+# Efficient Fine-Tuning of CLIP for Traffic Sign Recognition
 
-> **CLIP 在交通标志识别上的高效微调对比研究**
->
-> Course Project · Deep Learning & Computer Vision · Application Track
->
-> Systematically comparing **five parameter-efficient adaptation methods** (Zero-shot · Linear Probe · CoOp · CLIP-Adapter · LoRA) on the **GTSRB** traffic-sign benchmark, under a consumer-GPU budget (RTX 4060, 8GB).
+**Languages:** English | [简体中文](README.zh-CN.md)
 
 ---
 
-## 📌 Overview
+## Abstract
 
-Vision-language models like CLIP achieve strong zero-shot performance on natural images, but their accuracy **drops sharply on domain-specific, symbolic visual data** such as traffic signs (we observe **zero-shot Top-1 ≈ 27.5%** on GTSRB — far below natural-image benchmarks).
+Vision-language models such as CLIP achieve strong zero-shot accuracy on natural
+images, yet their performance drops sharply on domain-specific, symbolic visual
+data. On the GTSRB traffic-sign benchmark we observe a zero-shot Top-1 accuracy of
+only about 27.5 percent, far below typical natural-image benchmarks.
 
-This project investigates: **under a consumer-GPU (8GB) and limited-label budget, which parameter-efficient fine-tuning (PEFT) method delivers the best accuracy-per-parameter and accuracy-per-sample trade-off?**
-
-| Method | Trainable Params | Reference |
-|---|---|---|
-| M0 · Zero-shot CLIP        | 0          | Radford et al. (2021) |
-| M1 · Linear Probe          | ~33 K      | Radford et al. (2021) |
-| M2 · CoOp (learned prompt) | ~8 K       | Zhou et al., IJCV 2022 |
-| M3 · CLIP-Adapter          | ~0.5 M     | Gao et al., IJCV 2023 |
-| M4 · LoRA on CLIP          | ~0.15 M    | Hu et al. (2022) |
-
-**Status:** 🟢 Environment ready · 🟢 Data ready · 🟢 Zero-shot baseline validated · 🟡 Training framework in progress
+This project presents a systematic comparison of five parameter-efficient
+fine-tuning methods — Zero-shot, Linear Probe, CoOp, CLIP-Adapter, and LoRA —
+under a consumer-GPU budget of 8 GB. The central question is which method offers
+the best trade-off between accuracy, trainable parameters, and labeled-data
+efficiency for adapting CLIP to traffic-sign recognition.
 
 ---
 
-## 📑 Table of Contents
+## Contents
 
-- [Overview](#-overview)
-- [Key Results](#-key-results)
-- [Repository Structure](#-repository-structure)
-- [Environment Setup](#-environment-setup)
-- [Quick Start](#-quick-start)
-- [Dataset](#-dataset)
-- [Methods](#-methods)
-- [Results & Figures](#-results--figures)
-- [Citation](#-citation)
-- [License](#-license)
-- [Acknowledgements](#-acknowledgements)
+1. [Method Overview](#method-overview)
+2. [Repository Structure](#repository-structure)
+3. [Environment Setup](#environment-setup)
+4. [Quick Start](#quick-start)
+5. [Dataset](#dataset)
+6. [Results](#results)
+7. [Citation](#citation)
+8. [License](#license)
+9. [Acknowledgements](#acknowledgements)
 
 ---
 
-## 🏆 Key Results
+## Method Overview
 
-> _Pending experiments — to be populated as the training framework matures._
+| ID | Method | Trainable Parameters | Reference |
+|----|--------|----------------------|-----------|
+| M0 | Zero-shot CLIP | 0 | Radford et al., 2021 |
+| M1 | Linear Probe | about 33 K | Radford et al., 2021 |
+| M2 | CoOp | about 8 K | Zhou et al., IJCV 2022 |
+| M3 | CLIP-Adapter | about 0.5 M | Gao et al., IJCV 2023 |
+| M4 | LoRA on CLIP | about 0.15 M | Hu et al., 2022 |
 
-| Method | Test Top-1 | Trainable Params | Train Time (4060) |
-|---|---|---|---|
-| Zero-shot CLIP  | 27.5% (sanity) | 0 | — |
-| Linear Probe    | _TBD_ | ~33 K | _TBD_ |
-| CoOp            | _TBD_ | ~8 K | _TBD_ |
-| CLIP-Adapter    | _TBD_ | ~0.5 M | _TBD_ |
-| LoRA (r=8)      | _TBD_ | ~0.15 M | _TBD_ |
+Planned ablation studies:
+
+- Few-shot learning curves at 1, 2, 4, 8, and 16 shots per class.
+- LoRA rank sweep at r equal to 1, 4, 8, 16, and 32.
+- Failure-case analysis with a normalized confusion matrix.
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
 efficient-clip-finetuning/
-├── README.md
+├── README.md              Project documentation (English)
+├── README.zh-CN.md        Project documentation (Simplified Chinese)
 ├── LICENSE
 ├── requirements.txt
 ├── src/
-│   ├── class_names.py     # 43 readable class names + prompt generation
-│   ├── download_data.py   # GTSRB download (torchvision)
-│   ├── explore_data.py    # dataset statistics & visualization
-│   └── check_clip.py      # CLIP load verification + zero-shot sanity
-├── figures/               # generated plots (paper figures)
-├── results/               # CSV statistics / evaluation outputs
-├── outputs/               # training logs / checkpoints
-└── notebooks/             # exploratory notebooks
+│   ├── class_names.py     Readable names for the 43 classes
+│   ├── download_data.py   GTSRB download via torchvision
+│   ├── explore_data.py    Dataset statistics and visualization
+│   └── check_clip.py      CLIP load verification and zero-shot check
+├── figures/               Generated plots for the report
+├── results/               CSV statistics and evaluation outputs
+└── notebooks/             Exploratory notebooks
 ```
 
-> `data/` is excluded from version control (download via `download_data.py`).
+The `data/` directory is excluded from version control and is created by
+`download_data.py`.
 
 ---
 
-## 🛠 Environment Setup
+## Environment Setup
 
-**Verified on:** Windows 11 · Python 3.13 · CUDA 13.0 · RTX 4060 Laptop (8GB) · conda env `QuantAI`
+Verified configuration:
 
-### Option A — Reuse the existing conda env
+- Windows 11
+- Python 3.13
+- CUDA 13.0
+- NVIDIA RTX 4060 Laptop GPU, 8 GB
+- conda environment named `QuantAI`
+
+Option A. Reuse the existing conda environment:
+
 ```cmd
 C:\Users\<you>\miniconda3\Scripts\activate QuantAI
 ```
 
-### Option B — Fresh environment
+Option B. Create a fresh environment:
+
 ```cmd
 conda create -n clip-tsn python=3.13 -y
 conda activate clip-tsn
@@ -95,113 +99,116 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 pip install -r requirements.txt
 ```
 
-### Windows note
-If you hit `OMP: Error #15`, set before running:
+On Windows, if you encounter `OMP: Error #15`, set the following before running
+any script:
+
 ```cmd
 set KMP_DUPLICATE_LIB_OK=TRUE
 ```
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```cmd
-:: 1. Download GTSRB (~276 MB)
+:: 1. Download GTSRB, about 276 MB
 python src/download_data.py
 
 :: 2. Explore the dataset
 python src/explore_data.py
 
-:: 3. Verify CLIP + zero-shot sanity check
+:: 3. Verify CLIP and run the zero-shot sanity check
 python src/check_clip.py
 ```
 
 ---
 
-## 🗂 Dataset
+## Dataset
 
-**GTSRB — German Traffic Sign Recognition Benchmark**
+GTSRB, the German Traffic Sign Recognition Benchmark.
 
 | Property | Value |
-|---|---|
-| Classes | 43 (German traffic signs) |
-| Train | 26,640 images |
-| Test | 12,630 images |
-| Image size | Variable (median ~44×43, resized to 224 for CLIP) |
-| Class balance | Imbalanced (150–1,500 per class) |
+|----------|-------|
+| Number of classes | 43 German traffic signs |
+| Training images | 26,640 |
+| Test images | 12,630 |
+| Image size | Variable, median about 44 by 43 pixels |
+| Class balance | Imbalanced, 150 to 1,500 images per class |
 
-Download sources (fallback if torchvision is slow):
-- Official: https://benchmark.ini.rub.de/gtsrb_dataset.html
-- Kaggle: https://www.kaggle.com/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign
-- Zenodo: https://zenodo.org/records/13741936
+Alternative download sources when torchvision is slow:
 
----
-
-## 🧠 Methods
-
-| ID | Method | Idea |
-|---|---|---|
-| M0 | Zero-shot | No training; match image to class prompts via CLIP similarity |
-| M1 | Linear Probe | Freeze CLIP backbone, train a linear classifier on features |
-| M2 | CoOp | Learn continuous prompt vectors; backbone frozen |
-| M3 | CLIP-Adapter | Append a small bottleneck adapter; residual feature blend |
-| M4 | LoRA | Inject low-rank matrices into attention layers |
-
-Planned ablations: few-shot curves (1/2/4/8/16-shot), LoRA rank sweep (r=1/4/8/16/32), failure-case analysis & confusion matrix.
+- Official: <https://benchmark.ini.rub.de/gtsrb_dataset.html>
+- Kaggle: <https://www.kaggle.com/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign>
+- Zenodo: <https://zenodo.org/records/13741936>
 
 ---
 
-## 📊 Results & Figures
+## Results
 
-Exploration outputs (auto-generated by `explore_data.py`):
+Experiments are in progress. The table below will be populated as results become
+available.
 
-- `figures/class_distribution.png` — class distribution (train vs test)
-- `figures/samples_per_class.png` — one sample per class (0–42)
-- `results/train_class_distribution.csv` — per-class counts
-- `results/train_image_size_stats.csv` — image-size statistics
+| Method | Test Top-1 | Trainable Parameters | Training Time |
+|--------|------------|----------------------|---------------|
+| Zero-shot CLIP | 27.5 percent sanity check | 0 | none |
+| Linear Probe | pending | about 33 K | pending |
+| CoOp | pending | about 8 K | pending |
+| CLIP-Adapter | pending | about 0.5 M | pending |
+| LoRA, r = 8 | pending | about 0.15 M | pending |
+
+Data exploration outputs generated by `explore_data.py`:
+
+- `figures/class_distribution.png`, class distribution of train and test sets.
+- `figures/samples_per_class.png`, one sample per class.
+- `results/train_class_distribution.csv`, per-class image counts.
+- `results/train_image_size_stats.csv`, image-size statistics.
 
 ---
 
-## 📝 Citation
+## Citation
 
-If you build on this work, please cite the core methods:
+If you build on this work, please cite the core methods.
 
 ```bibtex
-@article{radford2021clip,
-  title={Learning Transferable Visual Models From Natural Language Supervision},
-  author={Radford, Alec and Kim, Jong Wook and Hallacy, Chris and others},
-  journal={ICML},
-  year={2021}
+@inproceedings{radford2021clip,
+  title     = {Learning Transferable Visual Models From Natural Language Supervision},
+  author    = {Radford, Alec and Kim, Jong Wook and Hallacy, Chris and others},
+  booktitle = {ICML},
+  year      = {2021}
 }
 
 @article{zhou2022coop,
-  title={Learning to Prompt for Vision-Language Models},
-  author={Zhou, Kaiyang and Yang, Jingkang and Loy, Chen Change and Liu, Ziwei},
-  journal={International Journal of Computer Vision (IJCV)},
-  year={2022}
+  title   = {Learning to Prompt for Vision-Language Models},
+  author  = {Zhou, Kaiyang and Yang, Jingkang and Loy, Chen Change and Liu, Ziwei},
+  journal = {International Journal of Computer Vision},
+  year    = {2022}
 }
 
 @article{gao2023clipadapter,
-  title={CLIP-Adapter: Better Vision-Language Models with Feature Adapters},
-  author={Gao, Peng and Geng, Shijie and others},
-  journal={International Journal of Computer Vision (IJCV)},
-  year={2023}
+  title   = {CLIP-Adapter: Better Vision-Language Models with Feature Adapters},
+  author  = {Gao, Peng and Geng, Shijie and others},
+  journal = {International Journal of Computer Vision},
+  year    = {2023}
 }
 ```
 
 ---
 
-## 📄 License
+## License
 
-Code is released under the **MIT License**. See [LICENSE](LICENSE).
+The code is released under the MIT License. See [LICENSE](LICENSE).
 
-The GTSRB dataset is licensed separately by its creators (see the official dataset page).
+The GTSRB dataset is distributed under its own license by its creators; see the
+official dataset page for terms.
 
 ---
 
-## 🙏 Acknowledgements
+## Acknowledgements
 
-- [open_clip](https://github.com/mlfoundations/open_clip) — CLIP model zoo
-- [PEFT (HuggingFace)](https://github.com/huggingface/peft) — LoRA implementation
-- [torchvision](https://github.com/pytorch/vision) — GTSRB loader
-- Course: Deep Learning & Computer Vision
+This project builds on the following open-source projects:
+
+- [open_clip](https://github.com/mlfoundations/open_clip), the CLIP model zoo.
+- [PEFT](https://github.com/huggingface/peft), HuggingFace parameter-efficient fine-tuning.
+- [torchvision](https://github.com/pytorch/vision), the GTSRB data loader.
+
+Course: Deep Learning and Computer Vision.
