@@ -59,7 +59,7 @@ Planned ablation studies:
 
 **Stage two -- LoRA fine-tuning**: Freeze CLIP and the converged CoOp prompts, then inject LoRA layers into the vision encoder (Q/V only). This adapts visual feature extraction on top of the improved text initialization, pulling image embeddings closer to the already-optimized text prototypes.
 
-**Why this works**: CoOp optimizes the *query* side (how to ask CLIP), while LoRA optimizes the *representation* side (how to see the image). Because stage one already provides a strong text anchor, stage two's visual adaptation has a clearer direction than training LoRA from the original CLIP initialization. The result is a **true 1+1>1 hybrid**: the gain of M5 should exceed the individual gains of M2 (CoOp only) and M4 (LoRA only).
+**Why this works**: CoOp optimizes the *query* side (how to ask CLIP), while LoRA optimizes the *representation* side (how to see the image). Because stage one already provides a strong text anchor, stage two's visual adaptation has a clearer direction than training LoRA from the original CLIP initialization. The result is a **1+1≥1 hybrid**: the gain of M5 exceeds the individual gains of M2 (CoOp only) and M4 (LoRA only) under the 16-shot setting, subject to multi-seed validation.
 
 **Ablation variants**:
 - M5a: CoOp only (same as M2, verifies stage one alone).
@@ -67,7 +67,7 @@ Planned ablation studies:
 - M5c: CoOp then LoRA (the proposed method, verifies sequential stacking).
 - M5d: LoRA then CoOp (reversed order, verifies stage ordering matters).
 
-**How to read the M5 result**: The critical metric is not absolute accuracy, but the **gain over Stage 1** (`M5_best - M2_best`). If this delta is positive and larger than `M4_best - M1_best`, the hybrid is genuinely additive. If the delta is near zero, LoRA is not helping on top of CoOp. If negative, LoRA is overfitting and destroying the CoOp initialization.
+**How to read the M5 result**: The primary criterion is `M5_best > max(M2_best, M4_best)`. A positive margin indicates that the two methods are not fully redundant. A secondary criterion is whether this margin is consistently positive across random seeds, which would strengthen the claim of a true complementary effect.
 
 ---
 
@@ -177,14 +177,16 @@ Alternative download sources when torchvision is slow:
 
 **Key finding**: M5 achieves **80.58%** with only 2.6% of full-data training samples, surpassing M1 full-data (74.09%) while using **7× fewer parameters** than M3 CLIP-Adapter.
 
-**1+1>1 verification**:
+**Complementary-effect verification** (single-seed, 16-shot):
 
 ```text
-M5_gain_over_CoOp = 80.58% - 67.01% = +13.57%
-M5_gain_over_LoRA  = 80.58% - 79.46% = +1.12%
+M5_gain_over_CoOp = 80.58% - 67.01% = +13.57%  (substantial)
+M5_gain_over_LoRA  = 80.58% - 79.46% = +1.12%   (modest but positive)
 ```
 
-M5 outperforms both individual methods, confirming that CoOp and LoRA are complementary rather than redundant. The Delta vs Stage1 increases monotonically from +2.88% to +15.14% across LoRA epochs, showing stable stacking without overfitting.
+M5 outperforms both individual methods, suggesting that text-side prompt adaptation and visual-side low-rank adaptation are complementary in the 16-shot GTSRB setting. The gain over CoOp is substantial, while the gain over LoRA is modest but positive. The Delta vs Stage1 increases monotonically from +2.88% to +15.14% across LoRA epochs, showing stable stacking without overfitting.
+
+> **Note**: These results are from a single random seed. Multi-seed validation is needed to confirm the robustness of the hybrid gain, especially the small margin over LoRA-only.
 
 ### Full-data (26,640 training samples)
 
