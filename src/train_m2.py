@@ -35,6 +35,7 @@ import open_clip
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
 from torchvision import transforms
+from feature_cache import FeatureDataset, precompute_image_features, make_feature_loaders
 
 # ========== 配置 ==========
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -139,6 +140,37 @@ class PromptLearner(nn.Module):
             self.token_suffix,  # [n_cls, *, ctx_dim]
         ], dim=1)
         return prompts
+
+
+class CoOpFeatureModel(nn.Module):
+    """CoOp model using frozen precomputed image features."""
+    def __init__(self, clip_model, prompt_learner):
+        super().__init__()
+        self.clip_model = clip_model
+        self.prompt_learner = prompt_learner
+        self.dtype = clip_model.token_embedding.weight.dtype
+
+    def encode_text_with_prompts(self):
+        prompts = self.prompt_learner()
+        x = prompts + self.clip_model.positional_embedding.to(prompts.dtype)
+        x = self.clip_model.transformer(x, attn_mask=self.clip_model.attn_mask)
+        x = self.clip_model.ln_final(x)
+        eot_indices = self.prompt_learner.tokenized_prompts.argmax(dim=-1)
+        x = x[torch.arange(x.shape[0], device=x.device), eot_indices]
+        if self.clip_model.text_projection is not None:
+            if isinstance(self.clip_model.text_projection, nn.Linear):
+                x = self.clip_model.text_projection(x)
+            else:
+                x = x @ self.clip_model.text_projection
+        return F.normalize(x, dim=-1)
+
+    def forward(self, image_features):
+        image_features = image_features.to(DEVICE, non_blocking=True)
+        image_features = F.normalize(image_features, dim=-1)
+        text_features = self.encode_text_with_prompts()
+        logit_scale = self.clip_model.logit_scale.exp()
+        logits = logit_scale * image_features @ text_features.t()
+        return logits
 
 
 class CoOpModel(nn.Module):
@@ -321,6 +353,22 @@ def evaluate(model, test_loader):
     return 100.0 * correct / total
 
 
+def evaluate_acc(model, test_loader):
+    """轻量评估：只返回准确率。"""
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for features, labels in test_loader:
+            features = features.to(DEVICE, non_blocking=True)
+            labels = labels.to(DEVICE, non_blocking=True)
+            with torch.amp.autocast('cuda'):
+                logits = model(features)
+            preds = logits.argmax(dim=-1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+    return 100.0 * correct / total
+
+
 def evaluate_detailed(model, test_loader):
     """
     详细评估：返回准确率、混淆矩阵、每类准确率、失败案例。
@@ -416,6 +464,31 @@ def save_failures(failures, save_path, max_samples=100):
     print(f"[Save] Failures ({min(len(failures), max_samples)} samples) saved to {csv_path}")
 
 
+def train_epoch_features(model, train_loader, optimizer, scaler, criterion):
+    model.train()
+    model.clip_model.eval()
+    model.prompt_learner.train()
+    total_loss = 0.0
+    for features, labels in train_loader:
+        features = features.to(DEVICE, non_blocking=True)
+        labels = labels.to(DEVICE, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        if scaler is not None:
+            with torch.amp.autocast("cuda"):
+                logits = model(features)
+                loss = criterion(logits, labels)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            logits = model(features)
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+        total_loss += loss.item()
+    return total_loss / len(train_loader)
+
+
 def train_epoch(model, train_loader, optimizer, scaler, criterion):
     model.train()
 
@@ -501,12 +574,17 @@ def main():
     n_trainable = sum(p.numel() for p in prompt_learner.parameters() if p.requires_grad)
     print(f"[Model] PromptLearner params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
 
-    # 创建完整模型
-    model = CoOpModel(clip_model, prompt_learner).to(DEVICE)
+    # 预计算 image features
+    train_features, train_labels = precompute_image_features(clip_model, train_loader, DEVICE, name="train")
+    test_features, test_labels = precompute_image_features(clip_model, test_loader, DEVICE, name="test")
+    train_loader, test_loader = make_feature_loaders(train_features, train_labels, test_features, test_labels, args.batch_size)
+
+    # 创建 feature-based CoOp 模型
+    model = CoOpFeatureModel(clip_model, prompt_learner).to(DEVICE)
 
     # 只优化 prompt_learner
     optimizer = AdamW(prompt_learner.parameters(), lr=args.lr, weight_decay=5e-4)
-    
+
     # AMP is enabled by default on CUDA. Use --no_amp only for debugging.
     if args.no_amp or not torch.cuda.is_available():
         print("[Model] AMP disabled")
@@ -514,58 +592,45 @@ def main():
     else:
         scaler = torch.amp.GradScaler("cuda")
         print("[Model] AMP enabled")
-    
-    criterion = nn.CrossEntropyLoss()
 
-    # 测试 DataLoader
-    print("[Test] Testing DataLoader...")
-    try:
-        test_iter = iter(train_loader)
-        test_images, test_labels = next(test_iter)
-        print(f"[Test] DataLoader OK: {test_images.shape}, {test_labels.shape}")
-    except Exception as e:
-        print(f"[ERROR] DataLoader failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+    criterion = nn.CrossEntropyLoss()
 
     # 训练循环
     best_acc = 0.0
+    best_state = None
     t_start = time.time()
     metrics = []  # [epoch, loss, test_acc]
 
     print(f"[Train] Starting training for {args.epochs} epochs...")
-    
+
     for epoch in range(args.epochs):
-        print(f"[Train] Epoch {epoch+1}/{args.epochs} starting...")
         t0 = time.time()
-        try:
-            loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
-        except Exception as e:
-            print(f"[ERROR] train_epoch failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-        
-        # 评估（详细）
-        try:
-            acc, confusion, per_class_acc, failures = evaluate_detailed(model, test_loader)
-        except Exception as e:
-            print(f"[ERROR] evaluate_detailed failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-            
+        loss = train_epoch_features(model, train_loader, optimizer, scaler, criterion)
+
+        # 轻量评估
+        acc = evaluate_acc(model, test_loader)
         epoch_time = time.time() - t0
-        best_acc = max(best_acc, acc)
+
+        if acc > best_acc:
+            best_acc = acc
+            best_state = {k: v.detach().cpu().clone() for k, v in prompt_learner.state_dict().items()}
+
         metrics.append([epoch + 1, loss, acc])
 
         print(f"Epoch {epoch+1:2d}/{args.epochs} | Loss: {loss:.4f} | "
               f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | Time: {epoch_time:.1f}s")
 
     total_time = time.time() - t_start
+
+    # 加载 best state 后只调用一次详细评估
+    if best_state is not None:
+        prompt_learner.load_state_dict(best_state)
+    acc, confusion, per_class_acc, failures = evaluate_detailed(model, test_loader)
+    print(f"[Eval] Best model detailed accuracy: {acc:.2f}%")
+
     print("=" * 60)
     print(f"M2 CoOp Best Accuracy: {best_acc:.2f}%")
+    print(f"Detailed eval accuracy: {acc:.2f}%")
     print(f"Total time: {total_time:.1f}s")
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() / 1024**3
@@ -574,8 +639,12 @@ def main():
     # 保存模型
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(prompt_learner.state_dict(), save_path)
-    print(f"[Save] Model saved to {save_path}")
+    if best_state is not None:
+        torch.save(best_state, save_path)
+        print(f"[Save] Best PromptLearner state saved to {save_path}")
+    else:
+        torch.save(prompt_learner.state_dict(), save_path)
+        print(f"[Save] Final PromptLearner state saved to {save_path}")
 
     # 保存日志（Logger 已经实时写入文件，这里只是额外备份）
     log_path = save_path.with_suffix('.log')
