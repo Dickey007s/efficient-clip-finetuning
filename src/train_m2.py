@@ -422,32 +422,36 @@ def train_epoch(model, train_loader, optimizer, scaler, criterion):
     print(f"[Train] train_epoch starting, batches: {len(train_loader)}")
     for batch_idx, (images, labels) in enumerate(train_loader):
         if batch_idx == 0:
-            print(f"[Train] First batch loaded, shape: {images.shape}")
-        print(f"[Train] Moving batch {batch_idx} to device...")
+            print(f"[Train] Processing batch 0...")
+        print(f"[Train] Moving to device...")
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        print(f"[Train] Batch {batch_idx} on device, calling zero_grad...")
+        print(f"[Train] zero_grad...")
         optimizer.zero_grad()
-        print(f"[Train] Batch {batch_idx} zero_grad done, computing logits...")
-        if scaler is not None:
-            with torch.amp.autocast('cuda'):
+        print(f"[Train] Computing logits...")
+        try:
+            if scaler is not None:
+                print(f"[Train] Using AMP...")
+                with torch.amp.autocast('cuda'):
+                    logits = model(images)
+                    loss = criterion(logits, labels)
+                print(f"[Train] backward...")
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
                 logits = model(images)
                 loss = criterion(logits, labels)
-            print(f"[Train] Batch {batch_idx} loss: {loss.item():.4f}, backward...")
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            logits = model(images)
-            print(f"[Train] Batch {batch_idx} logits computed")
-            loss = criterion(logits, labels)
-            print(f"[Train] Batch {batch_idx} loss: {loss.item():.4f}, backward...")
-            loss.backward()
-            print(f"[Train] Batch {batch_idx} backward done, step...")
-            optimizer.step()
-            print(f"[Train] Batch {batch_idx} step done")
+                print(f"[Train] backward (no AMP)...")
+                loss.backward()
+                optimizer.step()
+        except Exception as e:
+            print(f"[ERROR] Batch {batch_idx} failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         total_loss += loss.item()
-        if batch_idx % 100 == 0:
-            print(f"[Train] Batch {batch_idx}/{len(train_loader)} done")
+        if batch_idx == 0:
+            print(f"[Train] Batch 0 completed")
     print(f"[Train] train_epoch completed")
     return total_loss / len(train_loader)
 
@@ -462,6 +466,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save", type=str, default="outputs/m2_coop.pt")
     parser.add_argument("--no_amp", action="store_true", help="Disable AMP for Windows compatibility")
+    parser.add_argument("--force_amp", action="store_true", help="Force enable AMP even on Windows")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -472,6 +477,7 @@ def main():
     log_file = Path(args.save).with_suffix('.log')
     logger = Logger(log_file=str(log_file))
     sys.stdout = logger
+    sys.stderr = logger  # 同时重定向 stderr
 
     print("=" * 60)
     print("M2: CoOp (Context Optimization)")
@@ -507,7 +513,11 @@ def main():
     # 只优化 prompt_learner
     optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
     
-    if args.no_amp:
+    # 检测平台，Windows 下默认禁用 AMP 以避免兼容性问题
+    if os.name == 'nt' and not args.force_amp:
+        print("[Model] Windows detected, disabling AMP for stability")
+        scaler = None
+    elif args.no_amp:
         print("[Model] AMP disabled (full precision mode)")
         scaler = None
     else:
@@ -520,6 +530,18 @@ def main():
             scaler = None
     
     criterion = nn.CrossEntropyLoss()
+
+    # 测试 DataLoader
+    print("[Test] Testing DataLoader...")
+    try:
+        test_iter = iter(train_loader)
+        test_images, test_labels = next(test_iter)
+        print(f"[Test] DataLoader OK: {test_images.shape}, {test_labels.shape}")
+    except Exception as e:
+        print(f"[ERROR] DataLoader failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
     # 训练循环
     best_acc = 0.0
