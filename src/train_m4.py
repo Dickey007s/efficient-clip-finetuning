@@ -187,6 +187,23 @@ def evaluate(model, text_features, test_loader):
     return 100.0 * correct / total
 
 
+@torch.no_grad()
+def evaluate_acc(model, text_features, test_loader):
+    """轻量评估：只返回准确率。"""
+    model.eval()
+    correct, total = 0, 0
+    for images, labels in test_loader:
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
+        with torch.amp.autocast('cuda'):
+            image_features = model.encode_image(images)
+            image_features = F.normalize(image_features, dim=-1)
+            logits = 100.0 * image_features @ text_features.t()
+        preds = logits.argmax(dim=-1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
+    return 100.0 * correct / total
+
+
 def evaluate_detailed(model, text_features, test_loader):
     """
     详细评估：返回准确率、混淆矩阵、每类准确率、失败案例。
@@ -347,17 +364,22 @@ def main():
 
     # 训练循环
     best_acc = 0.0
+    best_lora_state = None
     t_start = time.time()
     metrics = []  # [epoch, loss, test_acc]
 
     for epoch in range(args.epochs):
         t0 = time.time()
         loss = train_epoch(clip_model, text_features, train_loader, optimizer, scaler, criterion)
-        
-        # 评估（详细）
-        acc, confusion, per_class_acc, failures = evaluate_detailed(clip_model, text_features, test_loader)
+
+        # 轻量评估
+        acc = evaluate_acc(clip_model, text_features, test_loader)
         epoch_time = time.time() - t0
-        best_acc = max(best_acc, acc)
+
+        if acc > best_acc:
+            best_acc = acc
+            best_lora_state = {n: p.detach().cpu().clone() for n, p in clip_model.named_parameters() if p.requires_grad}
+
         metrics.append([epoch + 1, loss, acc])
 
         print(f"Epoch {epoch+1:2d}/{args.epochs} | Loss: {loss:.4f} | "
@@ -371,10 +393,21 @@ def main():
         alloc = torch.cuda.max_memory_allocated() / 1024**3
         print(f"Peak GPU memory: {alloc:.2f} GB")
 
+    # 恢复 best LoRA 参数
+    if best_lora_state is not None:
+        with torch.no_grad():
+            for n, p in clip_model.named_parameters():
+                if p.requires_grad:
+                    p.copy_(best_lora_state[n].to(p.device))
+
+    # 训练结束后只调用一次详细评估
+    acc, confusion, per_class_acc, failures = evaluate_detailed(clip_model, text_features, test_loader)
+    print(f"[Eval] Best model detailed accuracy: {acc:.2f}%")
+
     # 保存模型（只保存 LoRA 参数）
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # 保存 LoRA 状态
     lora_state = {}
     for name, param in clip_model.named_parameters():
