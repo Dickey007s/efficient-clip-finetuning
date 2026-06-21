@@ -1,0 +1,45 @@
+============================================================
+M4: LoRA (Low-Rank Adaptation) on CLIP Image Encoder
+Epochs: 20 | LR: 0.0001 | Batch: 64 | Shots: 8
+LoRA rank: 1 | alpha: 2 | scaling: 2.00
+============================================================
+[Data] Few-shot mode: 8 shots/class, total 344 samples
+[Data] Test set: 12630 samples
+[Model] Loading CLIP ViT-B/32 (openai) on cuda ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[Model] Injecting LoRA (rank=1, alpha=2) into ViT...
+[Model] CLIP total params: 151.3M
+[Model] LoRA trainable params: 36,864 (36.9K)
+[Model] Text features precomputed: torch.Size([43, 512])
+Epoch  1/20 | Loss: 3.4577 | Test Acc: 30.05% | Best: 30.05% | Time: 27.9s
+Epoch  2/20 | Loss: 3.4939 | Test Acc: 30.12% | Best: 30.12% | Time: 32.0s
+Epoch  3/20 | Loss: 3.4714 | Test Acc: 30.13% | Best: 30.13% | Time: 32.7s
+Epoch  4/20 | Loss: 3.3231 | Test Acc: 30.15% | Best: 30.15% | Time: 33.8s
+Epoch  5/20 | Loss: 3.2905 | Test Acc: 30.30% | Best: 30.30% | Time: 33.7s
+Epoch  6/20 | Loss: 3.2050 | Test Acc: 30.34% | Best: 30.34% | Time: 34.3s
+Epoch  7/20 | Loss: 3.1100 | Test Acc: 30.10% | Best: 30.34% | Time: 34.0s
+Epoch  8/20 | Loss: 2.9557 | Test Acc: 29.97% | Best: 30.34% | Time: 34.4s
+Epoch  9/20 | Loss: 2.8265 | Test Acc: 30.26% | Best: 30.34% | Time: 34.3s
+Epoch 10/20 | Loss: 2.7655 | Test Acc: 31.07% | Best: 31.07% | Time: 46.7s
+Epoch 11/20 | Loss: 2.5680 | Test Acc: 32.08% | Best: 32.08% | Time: 45.3s
+Epoch 12/20 | Loss: 2.4196 | Test Acc: 33.17% | Best: 33.17% | Time: 33.7s
+Epoch 13/20 | Loss: 2.3503 | Test Acc: 34.39% | Best: 34.39% | Time: 33.8s
+Epoch 14/20 | Loss: 2.2103 | Test Acc: 35.85% | Best: 35.85% | Time: 33.9s
+Epoch 15/20 | Loss: 2.1126 | Test Acc: 37.28% | Best: 37.28% | Time: 33.9s
+Epoch 16/20 | Loss: 1.9633 | Test Acc: 38.46% | Best: 38.46% | Time: 35.0s
+Epoch 17/20 | Loss: 1.8711 | Test Acc: 40.07% | Best: 40.07% | Time: 34.0s
+Epoch 18/20 | Loss: 1.8049 | Test Acc: 41.70% | Best: 41.70% | Time: 34.1s
+Epoch 19/20 | Loss: 1.7119 | Test Acc: 43.20% | Best: 43.20% | Time: 34.2s
+Epoch 20/20 | Loss: 1.6178 | Test Acc: 44.31% | Best: 44.31% | Time: 33.9s
+============================================================
+Final Best Accuracy: 44.31%
+Total time: 695.6s
+Peak GPU memory: 1.84 GB
+[Eval] Best model detailed accuracy: 44.31%
+[Save] LoRA weights saved to outputs\m4_8shot_r1_a2_20ep.pt
+[Save] Log saved to outputs\m4_8shot_r1_a2_20ep.log
+[Save] Metrics saved to outputs\m4_8shot_r1_a2_20ep_metrics.csv
+[Save] Confusion matrix saved to outputs\m4_8shot_r1_a2_20ep_confusion.csv
+[Save] Per-class accuracy saved to outputs\m4_8shot_r1_a2_20ep_per_class.csv
+[Save] Failures (100 samples) saved to outputs\m4_8shot_r1_a2_20ep_failures.csv
