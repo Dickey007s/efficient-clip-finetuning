@@ -30,8 +30,7 @@ from io import StringIO
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import SGD
-from torch.cuda.amp import autocast, GradScaler
+from torch.optim import SGD, AdamW
 import open_clip
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
@@ -156,9 +155,10 @@ class CoOpModel(nn.Module):
         """
         返回 logits: [batch_size, n_cls]
         """
-        # Image features (冻结 CLIP)
-        image_features = self.clip_model.encode_image(image.type(self.dtype))
-        image_features = F.normalize(image_features, dim=-1)
+        # Image features are frozen in M2, so do not build autograd graph.
+        with torch.no_grad():
+            image_features = self.clip_model.encode_image(image.type(self.dtype))
+            image_features = F.normalize(image_features, dim=-1)
 
         # Text features with learnable prompts
         prompts = self.prompt_learner()  # [n_cls, L, ctx_dim]
@@ -418,41 +418,36 @@ def save_failures(failures, save_path, max_samples=100):
 
 def train_epoch(model, train_loader, optimizer, scaler, criterion):
     model.train()
+
+    # CLIP backbone is frozen in M2. Keep it in eval mode.
+    model.clip_model.eval()
+    model.prompt_learner.train()
+
     total_loss = 0.0
-    print(f"[Train] train_epoch starting, batches: {len(train_loader)}")
-    for batch_idx, (images, labels) in enumerate(train_loader):
-        if batch_idx == 0:
-            print(f"[Train] Processing batch 0...")
-        print(f"[Train] Moving to device...")
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        print(f"[Train] zero_grad...")
-        optimizer.zero_grad()
-        print(f"[Train] Computing logits...")
-        try:
-            if scaler is not None:
-                print(f"[Train] Using AMP...")
-                with torch.amp.autocast('cuda'):
-                    logits = model(images)
-                    loss = criterion(logits, labels)
-                print(f"[Train] backward...")
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
+
+    for images, labels in train_loader:
+        images = images.to(DEVICE, non_blocking=True)
+        labels = labels.to(DEVICE, non_blocking=True)
+
+        optimizer.zero_grad(set_to_none=True)
+
+        if scaler is not None:
+            with torch.amp.autocast("cuda"):
                 logits = model(images)
                 loss = criterion(logits, labels)
-                print(f"[Train] backward (no AMP)...")
-                loss.backward()
-                optimizer.step()
-        except Exception as e:
-            print(f"[ERROR] Batch {batch_idx} failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            logits = model(images)
+            loss = criterion(logits, labels)
+
+            loss.backward()
+            optimizer.step()
+
         total_loss += loss.item()
-        if batch_idx == 0:
-            print(f"[Train] Batch 0 completed")
-    print(f"[Train] train_epoch completed")
+
     return total_loss / len(train_loader)
 
 
@@ -465,8 +460,7 @@ def main():
     parser.add_argument("--n_ctx", type=int, default=16, help="Number of context tokens")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save", type=str, default="outputs/m2_coop.pt")
-    parser.add_argument("--no_amp", action="store_true", help="Disable AMP for Windows compatibility")
-    parser.add_argument("--force_amp", action="store_true", help="Force enable AMP even on Windows")
+    parser.add_argument("--no_amp", action="store_true", help="Disable AMP")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -511,23 +505,15 @@ def main():
     model = CoOpModel(clip_model, prompt_learner).to(DEVICE)
 
     # 只优化 prompt_learner
-    optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = AdamW(prompt_learner.parameters(), lr=args.lr, weight_decay=5e-4)
     
-    # 检测平台，Windows 下默认禁用 AMP 以避免兼容性问题
-    if os.name == 'nt' and not args.force_amp:
-        print("[Model] Windows detected, disabling AMP for stability")
-        scaler = None
-    elif args.no_amp:
-        print("[Model] AMP disabled (full precision mode)")
+    # AMP is enabled by default on CUDA. Use --no_amp only for debugging.
+    if args.no_amp or not torch.cuda.is_available():
+        print("[Model] AMP disabled")
         scaler = None
     else:
-        try:
-            scaler = torch.amp.GradScaler('cuda')
-            print(f"[Model] GradScaler initialized successfully")
-        except Exception as e:
-            print(f"[WARN] Failed to initialize GradScaler: {e}")
-            print("[Model] Falling back to full precision mode")
-            scaler = None
+        scaler = torch.amp.GradScaler("cuda")
+        print("[Model] AMP enabled")
     
     criterion = nn.CrossEntropyLoss()
 
@@ -597,17 +583,16 @@ def main():
         f.write(logger.getvalue())
     print(f"[Save] Log saved to {log_path}")
     
-    # 关闭 Logger 文件句柄
-    logger.close()
-
     # 保存详细数据
     save_metrics(metrics, save_path)
     save_confusion(confusion, save_path)
     save_per_class(per_class_acc, save_path)
     save_failures(failures, save_path)
 
-    # 恢复 stdout
+    # 恢复 stdout/stderr, then close logger file handle
     sys.stdout = logger.terminal
+    sys.stderr = logger.terminal
+    logger.close()
 
 
 if __name__ == "__main__":
