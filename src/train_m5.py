@@ -48,6 +48,7 @@ from lora_utils import inject_lora_into_visual
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
 from torchvision import transforms
+from feature_cache import FeatureDataset, precompute_image_features, make_feature_loaders
 
 # ========== 配置 ==========
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,6 +116,37 @@ class PromptLearner(nn.Module):
         ctx = self.ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
         prompts = torch.cat([self.token_prefix, ctx, self.token_suffix], dim=1)
         return prompts
+
+
+class CoOpFeatureModel(nn.Module):
+    """CoOp model using frozen precomputed image features."""
+    def __init__(self, clip_model, prompt_learner):
+        super().__init__()
+        self.clip_model = clip_model
+        self.prompt_learner = prompt_learner
+        self.dtype = clip_model.token_embedding.weight.dtype
+
+    def encode_text_with_prompts(self):
+        prompts = self.prompt_learner()
+        x = prompts + self.clip_model.positional_embedding.to(prompts.dtype)
+        x = self.clip_model.transformer(x, attn_mask=self.clip_model.attn_mask)
+        x = self.clip_model.ln_final(x)
+        eot_indices = self.prompt_learner.tokenized_prompts.argmax(dim=-1)
+        x = x[torch.arange(x.shape[0], device=x.device), eot_indices]
+        if self.clip_model.text_projection is not None:
+            if isinstance(self.clip_model.text_projection, nn.Linear):
+                x = self.clip_model.text_projection(x)
+            else:
+                x = x @ self.clip_model.text_projection
+        return F.normalize(x, dim=-1)
+
+    def forward(self, image_features):
+        image_features = image_features.to(DEVICE, non_blocking=True)
+        image_features = F.normalize(image_features, dim=-1)
+        text_features = self.encode_text_with_prompts()
+        logit_scale = self.clip_model.logit_scale.exp()
+        logits = logit_scale * image_features @ text_features.t()
+        return logits
 
 
 class CoOpLoRAModel(nn.Module):
@@ -276,6 +308,21 @@ def check_text_encoder_equivalence(clip_model):
     return True
 
 
+def evaluate_acc(model, test_loader):
+    """轻量评估：只返回准确率。"""
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            with torch.amp.autocast('cuda'):
+                logits = model(images)
+            preds = logits.argmax(dim=-1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+    return 100.0 * correct / total
+
+
 def evaluate_detailed(model, test_loader):
     model.eval()
     correct, total = 0, 0
@@ -322,6 +369,26 @@ def train_epoch(model, train_loader, optimizer, scaler, criterion):
         optimizer.zero_grad()
         with torch.amp.autocast('cuda'):
             logits = model(images)
+            loss = criterion(logits, labels)
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        total_loss += loss.item()
+    return total_loss / len(train_loader)
+
+
+def train_epoch_features(model, train_loader, optimizer, scaler, criterion):
+    """Stage 1 CoOp: 训练使用 feature loader。"""
+    model.train()
+    model.clip_model.eval()
+    model.prompt_learner.train()
+    total_loss = 0.0
+    for features, labels in train_loader:
+        features = features.to(DEVICE, non_blocking=True)
+        labels = labels.to(DEVICE, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        with torch.amp.autocast('cuda'):
+            logits = model(features)
             loss = criterion(logits, labels)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -404,8 +471,8 @@ def main():
     print(f"Shots: {args.shots or 'full'} | N_CTX: {args.n_ctx} | LoRA rank: {args.rank} | alpha: {args.alpha}")
     print("=" * 60)
 
-    # 加载数据
-    train_loader, test_loader = load_data(args.batch_size, args.shots)
+    # 加载数据（原始 image loader，Stage 2 需要）
+    image_train_loader, image_test_loader = load_data(args.batch_size, args.shots)
 
     # 加载 CLIP（全部冻结）
     clip_model = load_clip()
@@ -427,28 +494,40 @@ def main():
         print(f"\n{'='*60}")
         print("Stage 1: CoOp Warm-up (training context vectors)")
         print(f"{'='*60}")
-        
-        model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
+
+        # 预计算 image features（Stage 1 CLIP 冻结）
+        train_features, train_labels = precompute_image_features(clip_model, image_train_loader, DEVICE, name="train")
+        test_features, test_labels = precompute_image_features(clip_model, image_test_loader, DEVICE, name="test")
+        feature_train_loader, feature_test_loader = make_feature_loaders(train_features, train_labels, test_features, test_labels, args.batch_size)
+
+        model = CoOpFeatureModel(clip_model, prompt_learner).to(DEVICE)
         optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
         scaler = torch.amp.GradScaler('cuda')
         criterion = nn.CrossEntropyLoss()
-        
+
         best_acc = 0.0
+        best_prompt_state = None
         for epoch in range(args.coop_epochs):
             t0 = time.time()
-            loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
-            acc, _, _, _ = evaluate_detailed(model, test_loader)
+            loss = train_epoch_features(model, feature_train_loader, optimizer, scaler, criterion)
+            acc = evaluate_acc(model, feature_test_loader)
             epoch_time = time.time() - t0
-            best_acc = max(best_acc, acc)
+            if acc > best_acc:
+                best_acc = acc
+                best_prompt_state = {k: v.detach().cpu().clone() for k, v in prompt_learner.state_dict().items()}
             print(f"Epoch {epoch+1:2d}/{args.coop_epochs} | Loss: {loss:.4f} | "
                   f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | Time: {epoch_time:.1f}s")
-        
+
+        # 加载 best prompt
+        if best_prompt_state is not None:
+            prompt_learner.load_state_dict(best_prompt_state)
+
         print(f"[Stage 1] Best CoOp accuracy: {best_acc:.2f}%")
-        
+
         # 保存 Stage 1 的 prompt
         coop_path = Path(args.save).with_suffix('').with_name(Path(args.save).stem + '_stage1_coop.pt')
         coop_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(prompt_learner.state_dict(), coop_path)
+        torch.save(best_prompt_state if best_prompt_state is not None else prompt_learner.state_dict(), coop_path)
         print(f"[Stage 1] CoOp prompt saved to {coop_path}")
     else:
         raise ValueError(
@@ -460,19 +539,19 @@ def main():
     # 冻结 prompt，注入 LoRA 到 image encoder
     for p in prompt_learner.parameters():
         p.requires_grad = False
-    
+
     # 记录 Stage 1 最终准确率（作为 Stage 2 的基准）
     model = CoOpLoRAModel(clip_model, prompt_learner).to(DEVICE)
-    stage1_final_acc, _, _, _ = evaluate_detailed(model, test_loader)
+    stage1_final_acc = evaluate_acc(model, image_test_loader)
     print(f"\n[Stage 1] Final frozen-prompt accuracy before LoRA: {stage1_final_acc:.2f}%")
-    
+
     print(f"\n{'='*60}")
     print("Stage 2: LoRA Fine-tuning (prompt frozen)")
     print(f"{'='*60}")
-    
+
     print(f"[Model] Injecting LoRA (rank={args.rank}, alpha={args.alpha}) into ViT...")
     inject_lora_into_visual(clip_model.visual, rank=args.rank, alpha=args.alpha)
-    
+
     n_trainable = sum(p.numel() for p in clip_model.parameters() if p.requires_grad)
     print(f"[Model] LoRA trainable params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
 
@@ -481,28 +560,40 @@ def main():
     optimizer = AdamW(lora_params, lr=args.lora_lr, weight_decay=1e-4)
     scaler = torch.amp.GradScaler('cuda')
     criterion = nn.CrossEntropyLoss()
-    
+
     best_acc = 0.0
+    best_lora_state = None
     t_start = time.time()
     metrics = []
-    confusion = None
-    per_class_acc = None
-    failures = []
-    
+
     for epoch in range(args.lora_epochs):
         t0 = time.time()
-        loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
-        acc, confusion, per_class_acc, failures = evaluate_detailed(model, test_loader)
+        loss = train_epoch(model, image_train_loader, optimizer, scaler, criterion)
+        acc = evaluate_acc(model, image_test_loader)
         epoch_time = time.time() - t0
-        best_acc = max(best_acc, acc)
+        if acc > best_acc:
+            best_acc = acc
+            best_lora_state = {n: p.detach().cpu().clone() for n, p in clip_model.named_parameters() if p.requires_grad}
         metrics.append([epoch + 1, loss, acc])
-        
+
         delta = acc - stage1_final_acc
         print(f"Epoch {epoch+1:2d}/{args.lora_epochs} | Loss: {loss:.4f} | "
               f"Test Acc: {acc:.2f}% | Best: {best_acc:.2f}% | "
               f"Delta vs Stage1: {delta:+.2f}% | Time: {epoch_time:.1f}s")
-    
+
     total_time = time.time() - t_start
+
+    # 恢复 best LoRA 参数
+    if best_lora_state is not None:
+        with torch.no_grad():
+            for n, p in clip_model.named_parameters():
+                if p.requires_grad:
+                    p.copy_(best_lora_state[n].to(p.device))
+
+    # 训练结束后只调用一次详细评估
+    acc, confusion, per_class_acc, failures = evaluate_detailed(model, image_test_loader)
+    print(f"[Eval] Best model detailed accuracy: {acc:.2f}%")
+
     gain = best_acc - stage1_final_acc
     print("=" * 60)
     print(f"Stage 1 Final Accuracy: {stage1_final_acc:.2f}%")
@@ -513,35 +604,35 @@ def main():
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() / 1024**3
         print(f"Peak GPU memory: {alloc:.2f} GB")
-    
+
     # 保存
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # 保存 LoRA
     lora_path = save_path.with_suffix('').with_name(save_path.stem + '_lora.pt')
     lora_state = {n: p.data.cpu() for n, p in clip_model.named_parameters() if p.requires_grad}
     torch.save(lora_state, lora_path)
     print(f"[Save] LoRA weights saved to {lora_path}")
-    
+
     # 保存 frozen prompt
     coop_path = save_path.with_suffix('').with_name(save_path.stem + '_coop.pt')
     torch.save(prompt_learner.state_dict(), coop_path)
     print(f"[Save] Frozen CoOp prompt saved to {coop_path}")
-    
+
     # 保存日志和 CSV
     log_path = save_path.with_suffix('.log')
     with open(log_path, 'w', encoding='utf-8') as f:
         f.write(logger.getvalue())
     print(f"[Save] Log saved to {log_path}")
-    
+
     if metrics:
         save_metrics(metrics, save_path)
     if confusion is not None:
         save_confusion(confusion, save_path)
         save_per_class(per_class_acc, save_path)
         save_failures(failures, save_path)
-    
+
     sys.stdout = logger.terminal
 
 

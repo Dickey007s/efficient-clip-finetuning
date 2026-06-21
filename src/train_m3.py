@@ -34,6 +34,7 @@ import open_clip
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
 from torchvision import transforms
+from feature_cache import FeatureDataset, precompute_image_features, make_feature_loaders
 
 # ========== 配置 ==========
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -196,57 +197,71 @@ def evaluate(model, adapter, text_features, test_loader, ratio=0.2):
     return 100.0 * correct / total
 
 
-def evaluate_detailed(model, adapter, text_features, test_loader, ratio=0.2):
+def evaluate_acc_features(adapter, text_features, test_loader, ratio=0.2):
+    """轻量评估：只返回准确率。"""
+    adapter.eval()
+    correct, total = 0, 0
+    for features, labels in test_loader:
+        features = features.to(DEVICE, non_blocking=True)
+        labels = labels.to(DEVICE, non_blocking=True)
+        with torch.amp.autocast('cuda'):
+            adapted = adapter(features)
+            image_features = ratio * adapted + (1 - ratio) * features
+            image_features = F.normalize(image_features, dim=-1)
+            logits = 100.0 * image_features @ text_features.t()
+        preds = logits.argmax(dim=-1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
+    return 100.0 * correct / total
+
+
+def evaluate_detailed(adapter, text_features, test_loader, ratio=0.2):
     """
     详细评估：返回准确率、混淆矩阵、每类准确率、失败案例。
     """
-    model.eval()
     adapter.eval()
     correct, total = 0, 0
     all_preds = []
     all_labels = []
     all_indices = []
-    
+
     with torch.no_grad():
-        for batch_idx, (images, labels) in enumerate(test_loader):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
+        for batch_idx, (features, labels) in enumerate(test_loader):
+            features = features.to(DEVICE, non_blocking=True)
+            labels = labels.to(DEVICE, non_blocking=True)
             with torch.amp.autocast('cuda'):
-                image_features = model.encode_image(images)
-                # adapter + 残差融合
-                adapted = adapter(image_features)
-                image_features = ratio * adapted + (1 - ratio) * image_features
+                adapted = adapter(features)
+                image_features = ratio * adapted + (1 - ratio) * features
                 image_features = F.normalize(image_features, dim=-1)
-                # 相似度
                 logits = 100.0 * image_features @ text_features.t()
             preds = logits.argmax(dim=-1)
-            
+
             correct += (preds == labels).sum().item()
             total += labels.size(0)
-            
+
             all_preds.extend(preds.cpu().tolist())
             all_labels.extend(labels.cpu().tolist())
-            # 记录全局索引（近似）
             start_idx = batch_idx * test_loader.batch_size
             all_indices.extend(range(start_idx, start_idx + len(labels)))
-    
+
     acc = 100.0 * correct / total
-    
+
     # 混淆矩阵
     num_classes = 43
     confusion = torch.zeros(num_classes, num_classes, dtype=torch.long)
     for t, p in zip(all_labels, all_preds):
         confusion[t, p] += 1
-    
+
     # 每类准确率
     per_class_acc = {}
     for c in range(num_classes):
         class_total = confusion[c].sum().item()
         class_correct = confusion[c, c].item()
         per_class_acc[c] = 100.0 * class_correct / class_total if class_total > 0 else 0.0
-    
+
     # 失败案例
     failures = [(idx, t, p) for idx, t, p in zip(all_indices, all_labels, all_preds) if t != p]
-    
+
     return acc, confusion, per_class_acc, failures
 
 
@@ -298,21 +313,17 @@ def save_failures(failures, save_path, max_samples=100):
     print(f"[Save] Failures ({min(len(failures), max_samples)} samples) saved to {csv_path}")
 
 
-def train_epoch(model, adapter, text_features, train_loader, optimizer, scaler, criterion, ratio=0.2):
+def train_epoch_features(adapter, text_features, train_loader, optimizer, scaler, criterion, ratio=0.2):
     adapter.train()
     total_loss = 0.0
-    for images, labels in train_loader:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        optimizer.zero_grad()
+    for features, labels in train_loader:
+        features = features.to(DEVICE, non_blocking=True)
+        labels = labels.to(DEVICE, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast('cuda'):
-            # 提取 image features（冻结 CLIP）
-            with torch.no_grad():
-                image_features = model.encode_image(images)
-            # adapter + 残差融合
-            adapted = adapter(image_features)
-            image_features = ratio * adapted + (1 - ratio) * image_features
+            adapted = adapter(features)
+            image_features = ratio * adapted + (1 - ratio) * features
             image_features = F.normalize(image_features, dim=-1)
-            # 与 text features 计算相似度
             logits = 100.0 * image_features @ text_features.t()
             loss = criterion(logits, labels)
         scaler.scale(loss).backward()
@@ -356,11 +367,13 @@ def main():
     text_features = build_text_features(clip_model, tokenizer)
     print(f"[Model] Text features precomputed: {text_features.shape}")
 
+    # 预计算 image features
+    train_features, train_labels = precompute_image_features(clip_model, train_loader, DEVICE, name="train")
+    test_features, test_labels = precompute_image_features(clip_model, test_loader, DEVICE, name="test")
+    train_loader, test_loader = make_feature_loaders(train_features, train_labels, test_features, test_labels, args.batch_size)
+
     # 创建 Image Adapter
-    with torch.no_grad():
-        dummy = torch.zeros(1, 3, 224, 224).to(DEVICE)
-        embed_dim = clip_model.encode_image(dummy).shape[-1]
-    adapter = ImageAdapter(embed_dim, reduction=4).to(DEVICE)
+    adapter = ImageAdapter(train_features.shape[-1], reduction=4).to(DEVICE)
     n_trainable = sum(p.numel() for p in adapter.parameters() if p.requires_grad)
     print(f"[Model] Image Adapter params: {n_trainable:,} ({n_trainable/1e3:.1f}K)")
 
@@ -371,18 +384,23 @@ def main():
 
     # 训练循环
     best_acc = 0.0
+    best_state = None
     t_start = time.time()
     metrics = []  # [epoch, loss, test_acc]
 
     for epoch in range(args.epochs):
         t0 = time.time()
-        loss = train_epoch(clip_model, adapter, text_features, train_loader,
+        loss = train_epoch_features(adapter, text_features, train_loader,
                            optimizer, scaler, criterion)
-        
-        # 评估（详细）
-        acc, confusion, per_class_acc, failures = evaluate_detailed(clip_model, adapter, text_features, test_loader)
+
+        # 轻量评估
+        acc = evaluate_acc_features(adapter, text_features, test_loader)
         epoch_time = time.time() - t0
-        best_acc = max(best_acc, acc)
+
+        if acc > best_acc:
+            best_acc = acc
+            best_state = {k: v.detach().cpu().clone() for k, v in adapter.state_dict().items()}
+
         metrics.append([epoch + 1, loss, acc])
 
         print(f"Epoch {epoch+1:2d}/{args.epochs} | Loss: {loss:.4f} | "
@@ -396,10 +414,21 @@ def main():
         alloc = torch.cuda.max_memory_allocated() / 1024**3
         print(f"Peak GPU memory: {alloc:.2f} GB")
 
+    # 加载 best state
+    if best_state is not None:
+        adapter.load_state_dict(best_state)
+
+    # 训练结束后只调用一次详细评估
+    acc, confusion, per_class_acc, failures = evaluate_detailed(adapter, text_features, test_loader)
+    print(f"[Eval] Best model detailed accuracy: {acc:.2f}%")
+
     # 保存模型
     save_path = Path(args.save)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(adapter.state_dict(), save_path)
+    if best_state is not None:
+        torch.save(best_state, save_path)
+    else:
+        torch.save(adapter.state_dict(), save_path)
     print(f"[Save] Model saved to {save_path}")
 
     # 保存日志
