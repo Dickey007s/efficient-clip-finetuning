@@ -198,9 +198,9 @@ def load_data(batch_size=64, shots_per_class=None):
     test_set = WrappedDataset(test_raw, preprocess)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=True)
+                              num_workers=0, pin_memory=False)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
-                             num_workers=0, pin_memory=True)
+                             num_workers=0, pin_memory=False)
     return train_loader, test_loader
 
 

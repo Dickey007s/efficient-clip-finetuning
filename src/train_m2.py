@@ -19,7 +19,7 @@ M2: CoOp (Context Optimization)
   python src/train_m2.py --epochs 50 --lr 0.002 --batch_size 64 --n_ctx 16  # 全数据
 """
 import os
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import argparse
 import time
@@ -59,21 +59,36 @@ CLASS_NAMES = [
 
 
 class Logger:
-    """同时输出到控制台和内存缓冲区的日志记录器。"""
-    def __init__(self):
+    """同时输出到控制台、内存缓冲区和文件的日志记录器。"""
+    def __init__(self, log_file=None):
         self.terminal = sys.stdout
         self.buffer = StringIO()
+        self.log_file = log_file
+        if self.log_file:
+            Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
+            self.file_handle = open(self.log_file, 'w', encoding='utf-8')
+        else:
+            self.file_handle = None
 
     def write(self, message):
         self.terminal.write(message)
         self.buffer.write(message)
+        if self.file_handle:
+            self.file_handle.write(message)
+            self.file_handle.flush()
 
     def flush(self):
         self.terminal.flush()
         self.buffer.flush()
+        if self.file_handle:
+            self.file_handle.flush()
 
     def getvalue(self):
         return self.buffer.getvalue()
+    
+    def close(self):
+        if self.file_handle:
+            self.file_handle.close()
 
 
 
@@ -232,9 +247,9 @@ def load_data(batch_size=64, shots_per_class=None):
     test_set = WrappedDataset(test_raw, preprocess)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=True)
+                              num_workers=0, pin_memory=False)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
-                             num_workers=0, pin_memory=True)
+                             num_workers=0, pin_memory=False)
     return train_loader, test_loader
 
 
@@ -404,16 +419,36 @@ def save_failures(failures, save_path, max_samples=100):
 def train_epoch(model, train_loader, optimizer, scaler, criterion):
     model.train()
     total_loss = 0.0
-    for images, labels in train_loader:
+    print(f"[Train] train_epoch starting, batches: {len(train_loader)}")
+    for batch_idx, (images, labels) in enumerate(train_loader):
+        if batch_idx == 0:
+            print(f"[Train] First batch loaded, shape: {images.shape}")
+        print(f"[Train] Moving batch {batch_idx} to device...")
         images, labels = images.to(DEVICE), labels.to(DEVICE)
+        print(f"[Train] Batch {batch_idx} on device, calling zero_grad...")
         optimizer.zero_grad()
-        with torch.amp.autocast('cuda'):
+        print(f"[Train] Batch {batch_idx} zero_grad done, computing logits...")
+        if scaler is not None:
+            with torch.amp.autocast('cuda'):
+                logits = model(images)
+                loss = criterion(logits, labels)
+            print(f"[Train] Batch {batch_idx} loss: {loss.item():.4f}, backward...")
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
             logits = model(images)
+            print(f"[Train] Batch {batch_idx} logits computed")
             loss = criterion(logits, labels)
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+            print(f"[Train] Batch {batch_idx} loss: {loss.item():.4f}, backward...")
+            loss.backward()
+            print(f"[Train] Batch {batch_idx} backward done, step...")
+            optimizer.step()
+            print(f"[Train] Batch {batch_idx} step done")
         total_loss += loss.item()
+        if batch_idx % 100 == 0:
+            print(f"[Train] Batch {batch_idx}/{len(train_loader)} done")
+    print(f"[Train] train_epoch completed")
     return total_loss / len(train_loader)
 
 
@@ -426,14 +461,16 @@ def main():
     parser.add_argument("--n_ctx", type=int, default=16, help="Number of context tokens")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save", type=str, default="outputs/m2_coop.pt")
+    parser.add_argument("--no_amp", action="store_true", help="Disable AMP for Windows compatibility")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
 
-    # 重定向 stdout 到 Logger
-    logger = Logger()
+    # 重定向 stdout 到 Logger（同时写入文件）
+    log_file = Path(args.save).with_suffix('.log')
+    logger = Logger(log_file=str(log_file))
     sys.stdout = logger
 
     print("=" * 60)
@@ -469,7 +506,19 @@ def main():
 
     # 只优化 prompt_learner
     optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-    scaler = torch.amp.GradScaler('cuda')
+    
+    if args.no_amp:
+        print("[Model] AMP disabled (full precision mode)")
+        scaler = None
+    else:
+        try:
+            scaler = torch.amp.GradScaler('cuda')
+            print(f"[Model] GradScaler initialized successfully")
+        except Exception as e:
+            print(f"[WARN] Failed to initialize GradScaler: {e}")
+            print("[Model] Falling back to full precision mode")
+            scaler = None
+    
     criterion = nn.CrossEntropyLoss()
 
     # 训练循环
@@ -477,12 +526,28 @@ def main():
     t_start = time.time()
     metrics = []  # [epoch, loss, test_acc]
 
+    print(f"[Train] Starting training for {args.epochs} epochs...")
+    
     for epoch in range(args.epochs):
+        print(f"[Train] Epoch {epoch+1}/{args.epochs} starting...")
         t0 = time.time()
-        loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
+        try:
+            loss = train_epoch(model, train_loader, optimizer, scaler, criterion)
+        except Exception as e:
+            print(f"[ERROR] train_epoch failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # 评估（详细）
-        acc, confusion, per_class_acc, failures = evaluate_detailed(model, test_loader)
+        try:
+            acc, confusion, per_class_acc, failures = evaluate_detailed(model, test_loader)
+        except Exception as e:
+            print(f"[ERROR] evaluate_detailed failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+            
         epoch_time = time.time() - t0
         best_acc = max(best_acc, acc)
         metrics.append([epoch + 1, loss, acc])
@@ -504,11 +569,14 @@ def main():
     torch.save(prompt_learner.state_dict(), save_path)
     print(f"[Save] Model saved to {save_path}")
 
-    # 保存日志
+    # 保存日志（Logger 已经实时写入文件，这里只是额外备份）
     log_path = save_path.with_suffix('.log')
     with open(log_path, 'w', encoding='utf-8') as f:
         f.write(logger.getvalue())
     print(f"[Save] Log saved to {log_path}")
+    
+    # 关闭 Logger 文件句柄
+    logger.close()
 
     # 保存详细数据
     save_metrics(metrics, save_path)
