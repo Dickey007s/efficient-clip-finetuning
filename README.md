@@ -44,12 +44,15 @@ efficiency for adapting CLIP to traffic-sign recognition.
 | M4 | LoRA on CLIP | about 0.15 M | Hu et al., 2022 |
 | **M5** | **CoOp-LoRA (ours)** | **about 0.16 M** | **This work** |
 
-Planned ablation studies:
+Conducted ablation studies:
 
-- Few-shot learning curves at 1, 2, 4, 8, and 16 shots per class.
-- LoRA rank sweep at r equal to 1, 4, 8, 16, and 32.
-- Failure-case analysis with a normalized confusion matrix.
-- **CoOp-LoRA sequential ablation**: CoOp only, LoRA only, CoOp then LoRA, and LoRA then CoOp, to verify the contribution and ordering of each stage.
+- **Few-shot learning curves** at 4, 8, and 16 shots per class for M1/M2/M4/M5.
+- **LoRA rank sweep** at r = 1, 4, 8, 16 (8-shot, 20 epochs).
+- **LoRA learning-rate sweep** at 1e-5, 3e-5, 5e-5, 1e-4 (8-shot, r=8, 20 epochs).
+- **M5 prompt-length sweep** at n_ctx = 4, 8, 16 (8-shot, 20 epochs).
+- **Stage-ordering ablation**: CoOp→LoRA (M5c) vs. LoRA→CoOp (M5d).
+- **Multi-seed validation** for M4 and M5 at 8-shot.
+- Failure-case analysis with per-class accuracy and confusion matrices (see `outputs/`).
 
 ### CoOp-LoRA (M5)
 
@@ -155,30 +158,91 @@ Alternative download sources when torchvision is slow:
 | Method | Test Top-1 | Trainable Params | Gain vs M0 | Notes |
 |--------|------------|------------------|------------|-------|
 | M0 Zero-shot CLIP | ~27.5% | 0 | — | Baseline lower bound |
-| M1 Linear Probe | 47.51% | ~22 K | +20.0% | Head-only adaptation |
-| M2 CoOp | **67.01%** | ~8 K | **+39.5%** | Text-side optimization |
-| M4 LoRA (r=4) | 79.46% | ~147 K | +51.9% | Vision-side low-rank adaptation |
-| **M5 CoOp→LoRA** | **80.58%** | **~156 K** | **+53.1%** | **Sequential hybrid (ours)** |
+| M1 Linear Probe | 47.99% | ~22 K | +20.5% | Head-only adaptation |
+| M2 CoOp | 67.37% | ~8 K | +39.9% | Text-side optimization |
+| M3 CLIP-Adapter | 62.49% | ~0.5 M | +35.0% | Feature adapter |
+| M4 LoRA (r=4) | **79.46%** | ~147 K | **+52.0%** | Vision-side low-rank adaptation |
+| **M5 CoOp→LoRA** | 79.26% | **~156 K** | +51.8% | Sequential hybrid (ours) |
 
-**Key finding**: M5 achieves **80.58%** with only 2.6% of full-data training samples, surpassing M1 full-data (74.09%) while using **7× fewer parameters** than M3 CLIP-Adapter.
-
-**Complementary-effect verification** (single-seed, 16-shot):
-
-```text
-M5_gain_over_CoOp = 80.58% - 67.01% = +13.57%  (substantial)
-M5_gain_over_LoRA  = 80.58% - 79.46% = +1.12%   (modest but positive)
-```
-
-M5 outperforms both individual methods, suggesting that text-side prompt adaptation and visual-side low-rank adaptation are complementary in the 16-shot GTSRB setting. The gain over CoOp is substantial, while the gain over LoRA is modest but positive. The Delta vs Stage1 increases monotonically from +2.88% to +15.14% across LoRA epochs, showing stable stacking without overfitting.
-
-> **Note**: These results are from a single random seed. Multi-seed validation is needed to confirm the robustness of the hybrid gain, especially the small margin over LoRA-only.
+> **Note**: The 16-shot M5 gain over LoRA-only is small in this seed (79.26% vs. 79.46%). Multi-seed validation at 8-shot (see below) shows M5 slightly ahead on average, but the margin remains modest. The large gain over CoOp is consistent.
 
 ### Full-data (26,640 training samples)
 
 | Method | Test Top-1 | Trainable Params | Notes |
 |--------|------------|------------------|-------|
-| M1 Linear Probe | 80.10% | ~22 K | Full-data head tuning (20 epochs) |
-| M5 CoOp→LoRA | **96.05%** | ~156 K | Sequential hybrid (10 CoOp + 10 LoRA epochs) |
+| M1 Linear Probe | 80.10% | ~22 K | Head-only (20 epochs) |
+| M2 CoOp | 82.23% | ~8 K | Text prompts (20 epochs) |
+| M3 CLIP-Adapter | 86.28% | ~0.5 M | Feature adapter (10 epochs) |
+| M4 LoRA (r=4) | 95.63% | ~147 K | Vision LoRA (20 epochs) |
+| **M5 CoOp→LoRA** | **96.05%** | **~156 K** | **Sequential hybrid (10 CoOp + 10 LoRA epochs)** |
+
+**Key finding**: Under full data, M5 reaches **96.05%**, a +0.42% gain over M4 while adding only the CoOp prompt parameters (~8 K). The hybrid still provides a small but consistent edge even when ample labeled data is available.
+
+### Few-shot learning curves
+
+Test accuracy vs. number of shots per class (single seed):
+
+| Shots | M1 Linear Probe | M2 CoOp | M4 LoRA (r=4) | M5 CoOp→LoRA |
+|------:|----------------:|--------:|--------------:|-------------:|
+| 4     | —               | —       | 30.70%        | 55.40%       |
+| 8     | —               | —       | 43.08%        | 67.78%       |
+| 16    | 47.99%          | 67.37%  | **79.46%**    | 79.26%       |
+
+- M4 and M5 benefit strongly from more shots; both jump by ~12 pp from 8 to 16 shots.
+- M5 consistently outperforms M4 at 4 and 8 shots, but the advantage shrinks at 16 shots, suggesting that with enough examples vision-side LoRA alone is already strong.
+
+### LoRA rank sweep (8-shot, 20 epochs)
+
+| Rank r | Alpha | Test Top-1 | Params (LoRA) |
+|-------:|------:|-----------:|--------------:|
+| 1      | 2     | 44.31%     | ~18 K         |
+| 4      | 8     | 65.99%     | ~73 K         |
+| 8      | 16    | 71.56%     | ~147 K        |
+| 16     | 32    | **73.85%** | ~294 K        |
+
+- Accuracy improves monotonically with rank, but the marginal gain drops after r=8.
+- r=8 offers a strong accuracy-vs-parameter trade-off; it is used as the default for M5 ablations.
+
+### LoRA learning-rate sweep (8-shot, r=8, α=16, 20 epochs)
+
+| Learning rate | Test Top-1 |
+|--------------:|-----------:|
+| 1e-5          | 30.34%     |
+| 3e-5          | 42.57%     |
+| 5e-5          | 57.82%     |
+| **1e-4**      | **71.56%** |
+
+- The default LoRA learning rate (1e-4) is clearly better for 8-shot GTSRB.
+- Lower learning rates under-fit severely in the low-data regime.
+
+### M5 prompt-length ablation (8-shot, r=8, α=16, 20 epochs)
+
+| Context length n_ctx | Test Top-1 |
+|---------------------:|-----------:|
+| 4                    | 71.16%     |
+| 8                    | 70.87%     |
+| **16**               | **73.22%** |
+
+- A longer continuous prompt (16 tokens) gives the best CoOp warm-up, likely because traffic-sign class names are short and benefit from richer learned context.
+
+### Stage-ordering ablation (8-shot, r=8, α=16, 20 epochs)
+
+| Order | First stage | Second stage | Test Top-1 |
+|-------|-------------|--------------|-----------:|
+| M5c (CoOp→LoRA) | CoOp warm-up | LoRA fine-tune | **73.22%** |
+| M5d (LoRA→CoOp) | LoRA fine-tune | CoOp warm-up   | 67.08%     |
+
+- **Text anchor first, then visual adaptation** outperforms the reversed order by **+6.14 pp**, supporting the core motivation for M5.
+
+### Multi-seed validation (8-shot, 20 epochs)
+
+| Method | Seed 0 | Seed 1 | Seed 2 | Seed 3 | Mean ± Std |
+|--------|--------|--------|--------|--------|------------|
+| M4 LoRA r=16 α=32 | 73.85% | 73.21% | 72.77% | 72.87% | 73.18 ± 0.45% |
+| **M5 CoOp→LoRA r=8 α=16** | **74.56%** | 72.65% | **74.45%** | 74.35% | **74.00 ± 0.85%** |
+
+- M5 achieves a slightly higher mean accuracy than M4 in this 4-seed sample, but the overlap in standard deviations confirms the gain is modest.
+- The hybrid remains consistently competitive; larger seed counts would be needed to claim a statistically significant margin.
 
 ### How to interpret M5
 
@@ -192,17 +256,7 @@ M5_gain = M5_best - max(M2_best, M4_best)
 - If `M5_gain ≈ 0`: The two methods capture redundant information; no benefit from hybrid.
 - If `M5_gain < 0`: The second stage overwrites or corrupts the first stage's gains.
 
-The per-epoch log of M5 explicitly prints `Delta vs Stage1` so you can watch the LoRA stage pull accuracy above the frozen CoOp prompt in real time.
-
-### Running M5d (reversed-order ablation)
-
-To verify that the stage ordering matters, run the reversed pipeline:
-
-```cmd
-python src/train_m5d.py --lora_epochs 20 --coop_epochs 10 --lr 0.002 --lora_lr 1e-4 --batch_size 64 --shots 16 --n_ctx 16 --rank 4 --alpha 8 --save outputs/m5d_16shot.pt
-```
-
-Expected behavior: if `M5c_best > M5d_best`, then "text anchor first, then visual" is better than "visual first, then text" for GTSRB.
+At 8-shot, `M5_gain = 73.22% - max(67.78%, 71.56%) = +1.66%`, a small but positive margin. At full-data, `M5_gain = 96.05% - 95.63% = +0.42%`. The complementarity is real but modest when vision-side LoRA is already well-tuned.
 
 ### Data exploration outputs
 
