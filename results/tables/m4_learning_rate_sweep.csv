@@ -1,0 +1,5 @@
+learning_rate,run_name,best_acc
+1e-5,m4_8shot_r8_a16_lr1e-5_20ep,30.3405
+3e-5,m4_8shot_r8_a16_lr3e-5_20ep,42.5732
+5e-5,m4_8shot_r8_a16_lr5e-5_20ep,57.8226
+1e-4,m4_8shot_r8_a16_20ep,71.5598

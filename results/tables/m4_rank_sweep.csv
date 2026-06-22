@@ -1,0 +1,5 @@
+rank,alpha,run_name,best_acc,trainable_params
+1,2,m4_8shot_r1_a2_20ep,44.3072,36864
+4,8,m4_8shot_r4_a8_20ep,65.9937,147456
+8,16,m4_8shot_r8_a16_20ep,71.5598,294912
+16,32,m4_8shot_r16_a32_20ep,73.8480,589824

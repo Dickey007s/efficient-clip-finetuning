@@ -1,0 +1,8 @@
+setting,method,status,planned_run_name,note
+8-shot,M1,pending,,README few-shot matrix has no archived run yet.
+8-shot,M2,pending,,README few-shot matrix has no archived run yet.
+8-shot,M3,pending,,README few-shot matrix has no archived run yet.
+4-shot,M1,pending,,README few-shot matrix has no archived run yet.
+4-shot,M2,pending,,README few-shot matrix has no archived run yet.
+4-shot,M3,pending,,README few-shot matrix has no archived run yet.
+zero-shot,M0,not_archived,,"check_clip.py provides a sanity check, but no full-test artifact is stored in outputs/."

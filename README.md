@@ -38,21 +38,23 @@ efficiency for adapting CLIP to traffic-sign recognition.
 | ID | Method | Trainable Parameters | Reference |
 |----|--------|----------------------|-----------|
 | M0 | Zero-shot CLIP | 0 | Radford et al., 2021 |
-| M1 | Linear Probe | about 33 K | Radford et al., 2021 |
+| M1 | Linear Probe | about 22 K | Radford et al., 2021 |
 | M2 | CoOp | about 8 K | Zhou et al., IJCV 2022 |
-| M3 | CLIP-Adapter | about 0.5 M | Gao et al., IJCV 2023 |
-| M4 | LoRA on CLIP | about 0.15 M | Hu et al., 2022 |
-| **M5** | **CoOp-LoRA (ours)** | **about 0.16 M** | **This work** |
+| M3 | CLIP-Adapter | about 131 K | Gao et al., IJCV 2023 |
+| M4 | LoRA on CLIP | about 147 K (r=4) | Hu et al., 2022 |
+| **M5** | **CoOp-LoRA (ours)** | **about 156 K (r=4)** | **This work** |
 
 Conducted ablation studies:
 
-- **Few-shot learning curves** at 4, 8, and 16 shots per class for M1/M2/M3/M4/M5.
-- **LoRA rank sweep** at r = 1, 4, 8, 16 (8-shot, 20 epochs).
-- **LoRA learning-rate sweep** at 1e-5, 3e-5, 5e-5, 1e-4 (8-shot, r=8, 20 epochs).
+- **Main archived runs** for M1-M5 on full data and at 16-shot.
+- **Low-shot archived runs** for M4/M5 at 4-shot and 8-shot. M1/M2/M3 low-shot runs are still pending and are left blank in the summary tables.
+- **LoRA rank sweep** at r = 1, 4, 8, 16 for M4 (8-shot, 20 epochs).
+- **LoRA learning-rate sweep** at 1e-5, 3e-5, 5e-5, 1e-4 for M4 (8-shot, r=8, 20 epochs).
 - **M5 prompt-length sweep** at n_ctx = 4, 8, 16 (8-shot, 20 epochs).
 - **Stage-ordering ablation**: CoOp→LoRA (M5c) vs. LoRA→CoOp (M5d).
 - **Multi-seed validation** for M4 and M5 at 8-shot.
 - Failure-case analysis with per-class accuracy and confusion matrices (see `outputs/`).
+- Supplemental and exploratory artifacts are preserved separately, including extra M5 schedule/rank runs and two CLC runs whose source script is not present in the current repo snapshot.
 
 ### CoOp-LoRA (M5)
 
@@ -62,7 +64,7 @@ Conducted ablation studies:
 
 **Stage two -- LoRA fine-tuning**: Freeze CLIP and the converged CoOp prompts, then inject LoRA layers into the vision encoder (Q/V only). This adapts visual feature extraction on top of the improved text initialization, pulling image embeddings closer to the already-optimized text prototypes.
 
-**Why this works**: CoOp optimizes the *query* side (how to ask CLIP), while LoRA optimizes the *representation* side (how to see the image). Because stage one already provides a strong text anchor, stage two's visual adaptation has a clearer direction than training LoRA from the original CLIP initialization. The result is a **1+1≥1 hybrid**: the gain of M5 exceeds the individual gains of M2 (CoOp only) and M4 (LoRA only) under the 16-shot setting, subject to multi-seed validation.
+**Why this works**: CoOp optimizes the *query* side (how to ask CLIP), while LoRA optimizes the *representation* side (how to see the image). Because stage one already provides a strong text anchor, stage two's visual adaptation has a clearer direction than training LoRA from the original CLIP initialization. The intended effect is a **1+1≥1 hybrid**, but the cleaned artifacts show that this complementarity is strongest in the low-shot regime and does not hold uniformly at every data scale.
 
 **Ablation variants**:
 - M5a: CoOp only (same as M2, verifies stage one alone).
@@ -70,26 +72,40 @@ Conducted ablation studies:
 - M5c: CoOp then LoRA (the proposed method, verifies sequential stacking).
 - M5d: LoRA then CoOp (reversed order, verifies stage ordering matters; see `train_m5d.py`).
 
-**How to read the M5 result**: The primary criterion is `M5_best > max(M2_best, M4_best)`. A positive margin indicates that the two methods are not fully redundant. A secondary criterion is whether this margin is consistently positive across random seeds, which would strengthen the claim of a true complementary effect.
+**How to read the M5 result**: The main diagnostic is still `M5_best > max(M2_best, M4_best)`, but it should be evaluated per setting rather than treated as a universal rule. In this snapshot, the positive evidence is concentrated in 4-shot, 8-shot, and the matched 8-shot multi-seed study.
 
 ---
 
 ## Repository Structure
 
 ```
-efficient-clip-finetuning/
-├── README.md              Project documentation (English)
-├── README.zh-CN.md        Project documentation (Simplified Chinese)
+clip_traffic_sign/
+├── README.md
+├── README.zh-CN.md
 ├── LICENSE
 ├── requirements.txt
 ├── src/
-│   ├── class_names.py     Readable names for the 43 classes
-│   ├── download_data.py   GTSRB download via torchvision
-│   ├── explore_data.py    Dataset statistics and visualization
-│   └── check_clip.py      CLIP load verification and zero-shot check
-├── figures/               Generated plots for the report
-├── results/               CSV statistics and evaluation outputs
-└── notebooks/             Exploratory notebooks
+│   ├── train_m1.py ... train_m5d.py
+│   ├── class_names.py
+│   ├── data_utils.py
+│   ├── feature_cache.py
+│   ├── lora_utils.py
+│   ├── download_data.py
+│   ├── explore_data.py
+│   ├── check_clip.py
+│   └── curate_outputs.py  Organize artifacts and rebuild summary tables
+├── logs/                  Training logs
+├── outputs/
+│   ├── main/             Canonical archived runs
+│   ├── ablations/        Rank, LR, prompt-length, and stage-order studies
+│   ├── validation/       Multi-seed runs
+│   ├── supplemental/     Extra completed variants not used in the main tables
+│   └── exploratory/      Preserved but non-reproducible CLC artifacts
+├── results/
+│   ├── *.csv             Dataset statistics
+│   └── tables/           Auto-generated experiment summary tables
+├── figures/
+└── notebooks/
 ```
 
 The `data/` directory is excluded from version control and is created by
@@ -127,6 +143,9 @@ python src/explore_data.py
 
 :: 3. Verify CLIP and run the zero-shot sanity check
 python src/check_clip.py
+
+:: 4. After running experiments, reorganize outputs and rebuild summary tables
+python src/curate_outputs.py
 ```
 
 ---
@@ -153,121 +172,104 @@ Alternative download sources when torchvision is slow:
 
 ## Results
 
-### 16-shot (few-shot, 688 training samples)
+The cleaned tables under `results/tables/` are the source of truth for the current repo snapshot. Numbers below use the archived **best checkpoint** for each run, not the final epoch when those differ.
 
-| Method | Test Top-1 | Trainable Params | Gain vs M0 | Notes |
-|--------|------------|------------------|------------|-------|
-| M0 Zero-shot CLIP | ~27.5% | 0 | — | Baseline lower bound |
-| M1 Linear Probe | 47.99% | ~22 K | +20.5% | Head-only adaptation |
-| M2 CoOp | 67.37% | ~8 K | +39.9% | Text-side optimization |
-| M3 CLIP-Adapter | 62.49% | ~0.5 M | +35.0% | Feature adapter |
-| M4 LoRA (r=4) | **79.46%** | ~147 K | **+52.0%** | Vision-side low-rank adaptation |
-| **M5 CoOp→LoRA** | 79.26% | **~156 K** | +51.8% | Sequential hybrid (ours) |
+### 16-shot (688 training samples)
 
-> **Note**: The 16-shot M5 gain over LoRA-only is small in this seed (79.26% vs. 79.46%). Multi-seed validation at 8-shot (see below) shows M5 slightly ahead on average, but the margin remains modest. The large gain over CoOp is consistent.
+| Method | Best Top-1 | Trainable Params | Notes |
+|--------|-----------:|-----------------:|-------|
+| M1 Linear Probe | 48.23% | 22,059 | Head-only adaptation |
+| M2 CoOp | 67.37% | 8,192 | Text-side optimization |
+| M3 CLIP-Adapter | 62.49% | 131,072 | Frozen CLIP + image adapter |
+| **M4 LoRA (r=4)** | **79.46%** | **147,456** | Best archived 16-shot run |
+| M5 CoOp→LoRA | 79.26% | 155,648 | Slightly below M4 on this setting |
 
 ### Full-data (26,640 training samples)
 
-| Method | Test Top-1 | Trainable Params | Notes |
-|--------|------------|------------------|-------|
-| M1 Linear Probe | 80.10% | ~22 K | Head-only (20 epochs) |
-| M2 CoOp | 82.23% | ~8 K | Text prompts (20 epochs) |
-| M3 CLIP-Adapter | 86.28% | ~0.5 M | Feature adapter (10 epochs) |
-| M4 LoRA (r=4) | 95.63% | ~147 K | Vision LoRA (20 epochs) |
-| **M5 CoOp→LoRA** | **96.05%** | **~156 K** | **Sequential hybrid (10 CoOp + 10 LoRA epochs)** |
+| Method | Best Top-1 | Trainable Params | Notes |
+|--------|-----------:|-----------------:|-------|
+| M1 Linear Probe | 80.10% | 22,059 | 20 epochs |
+| M2 CoOp | 82.95% | 8,192 | Best checkpoint occurs before the last epoch |
+| M3 CLIP-Adapter | 86.28% | 131,072 | 10 epochs |
+| **M4 LoRA (r=4)** | **97.25%** | **147,456** | Best archived full-data result |
+| M5 CoOp→LoRA | 96.05% | 155,648 | 20 CoOp + 10 LoRA |
 
-**Key finding**: Under full data, M5 reaches **96.05%**, a +0.42% gain over M4 while adding only the CoOp prompt parameters (~8 K). The hybrid still provides a small but consistent edge even when ample labeled data is available.
+**What the archived artifacts support**: M5 is clearly useful in low-data regimes, but the cleaned full-data and 16-shot checkpoints do **not** support a blanket claim that M5 always beats M4. In this snapshot, M4 is best at 16-shot and on full data, while M5 is strongest at the very low-shot settings and remains slightly ahead in the matched 8-shot multi-seed study.
 
-### Few-shot learning curves
+### Few-shot coverage matrix
 
-Test accuracy vs. number of shots per class (single seed):
+Blank entries are still pending and are intentionally left empty so future runs can be added directly.
 
-| Shots | M1 Linear Probe | M2 CoOp | M3 CLIP-Adapter | M4 LoRA (r=4) | M5 CoOp→LoRA |
-|------:|----------------:|--------:|----------------:|--------------:|-------------:|
-| 4     | —               | —       | —               | 30.70%        | **55.40%**   |
-| 8     | —               | —       | —               | 43.08%        | **67.78%**   |
-| 16    | 47.99%          | 67.37%  | 62.49%          | **79.46%**    | 79.26%       |
+| Setting | M1 | M2 | M3 | M4 | M5 |
+|--------|----|----|----|----:|----:|
+| full    | 80.10% | 82.95% | 86.28% | **97.25%** | 96.05% |
+| 16-shot | 48.23% | 67.37% | 62.49% | **79.46%** | 79.26% |
+| 8-shot  |        |        |        | 43.08% | **67.78%** |
+| 4-shot  |        |        |        | 30.70% | **55.40%** |
 
-- At 4-shot and 8-shot, M5 substantially outperforms M4 (+24.7 pp and +24.7 pp), indicating that the CoOp text anchor is especially helpful when visual supervision is scarce.
-- At 16-shot the gap closes: vision-side LoRA alone is already strong, and the additional text-side optimization gives only a marginal (or even slightly negative in this seed) edge.
-- M1/M2/M3 were only evaluated at 16 shots; their shallow/frozen-encoder designs need more examples to reach competitive accuracy.
+The corresponding placeholder list is stored in `results/tables/pending_experiments.csv`.
 
-### 4-shot vs. 8-shot comparison (M4 vs. M5)
+### 4-shot vs. 8-shot main runs (M4 vs. M5)
 
-| Setting | M4 LoRA (r=4) | M5 CoOp→LoRA | M5 gain |
-|---------|--------------:|-------------:|--------:|
-| 4-shot  | 30.70%        | 55.40%       | **+24.70%** |
-| 8-shot  | 43.08%        | 67.78%       | **+24.70%** |
-| 16-shot | 79.46%        | 79.26%       | −0.20% |
+| Setting | M4 LoRA | M5 CoOp→LoRA | Gain |
+|---------|--------:|-------------:|-----:|
+| 4-shot  | 30.70%  | **55.40%**   | **+24.70 pp** |
+| 8-shot  | 43.08%  | **67.78%**   | **+24.70 pp** |
+| 16-shot | **79.46%** | 79.26%    | −0.20 pp |
 
-The hybrid gain is large and stable under 4-shot and 8-shot, then vanishes at 16-shot. This suggests the complementarity is strongest in the extremely low-data regime.
+The hybrid advantage is dramatic at 4-shot and 8-shot in the main archived runs, then disappears at 16-shot.
 
-### LoRA rank sweep (8-shot, 20 epochs)
+### M4 LoRA rank sweep (8-shot, 20 epochs)
 
-| Rank r | Alpha | Test Top-1 | Params (LoRA) |
-|-------:|------:|-----------:|--------------:|
-| 1      | 2     | 44.31%     | ~18 K         |
-| 4      | 8     | 65.99%     | ~73 K         |
-| 8      | 16    | 71.56%     | ~147 K        |
-| 16     | 32    | **73.85%** | ~294 K        |
+| Rank r | Alpha | Best Top-1 | Trainable Params |
+|-------:|------:|-----------:|-----------------:|
+| 1      | 2     | 44.31%     | 36,864 |
+| 4      | 8     | 65.99%     | 147,456 |
+| 8      | 16    | 71.56%     | 294,912 |
+| 16     | 32    | **73.85%** | **589,824** |
 
-- Accuracy improves monotonically with rank, but the marginal gain drops after r=8.
-- r=8 offers a strong accuracy-vs-parameter trade-off; it is used as the default for M5 ablations.
+Accuracy improves monotonically with rank, but the jump from r=8 to r=16 is much smaller than the jump from r=4 to r=8.
 
-### LoRA learning-rate sweep (8-shot, r=8, α=16, 20 epochs)
+### M4 learning-rate sweep (8-shot, r=8, α=16, 20 epochs)
 
-| Learning rate | Test Top-1 |
+| Learning rate | Best Top-1 |
 |--------------:|-----------:|
-| 1e-5          | 30.34%     |
-| 3e-5          | 42.57%     |
-| 5e-5          | 57.82%     |
+| 1e-5          | 30.34% |
+| 3e-5          | 42.57% |
+| 5e-5          | 57.82% |
 | **1e-4**      | **71.56%** |
 
-- The default LoRA learning rate (1e-4) is clearly better for 8-shot GTSRB.
-- Lower learning rates under-fit severely in the low-data regime.
+### M5 prompt-length ablation (8-shot, 20 CoOp + 20 LoRA)
 
-### M5 prompt-length ablation (8-shot, r=8, α=16, 20 epochs)
-
-| Context length n_ctx | Test Top-1 |
+| Context length n_ctx | Best Top-1 |
 |---------------------:|-----------:|
-| 4                    | 71.16%     |
-| 8                    | 70.87%     |
+| 4                    | 71.16% |
+| 8                    | 70.87% |
 | **16**               | **73.22%** |
 
-- A longer continuous prompt (16 tokens) gives the best CoOp warm-up, likely because traffic-sign class names are short and benefit from richer learned context.
+### Stage-order ablation (8-shot, matched seed-42 runs)
 
-### Stage-ordering ablation (8-shot, r=8, α=16, 20 epochs)
+| Variant | Stage 1 | Stage 2 | Best Top-1 |
+|--------|---------|---------|------------:|
+| M5 CoOp→LoRA | CoOp warm-up | LoRA fine-tune | **71.88%** |
+| M5d LoRA→CoOp | LoRA warm-up | CoOp fine-tune | 67.45% |
 
-| Order | First stage | Second stage | Test Top-1 |
-|-------|-------------|--------------|-----------:|
-| M5c (CoOp→LoRA) | CoOp warm-up | LoRA fine-tune | **73.22%** |
-| M5d (LoRA→CoOp) | LoRA fine-tune | CoOp warm-up   | 67.08%     |
+The forward order outperforms the reversed order by **4.43 pp** on the matched archived seed-42 runs.
 
-- **Text anchor first, then visual adaptation** outperforms the reversed order by **+6.14 pp**, supporting the core motivation for M5.
-
-### Multi-seed validation (8-shot, 20 epochs)
+### Multi-seed validation (8-shot, matched 20-epoch study)
 
 | Method | Seed 0 | Seed 1 | Seed 2 | Seed 3 | Mean ± Std |
 |--------|--------|--------|--------|--------|------------|
-| M4 LoRA r=16 α=32 | 73.85% | 73.21% | 72.77% | 72.87% | 73.18 ± 0.45% |
-| **M5 CoOp→LoRA r=8 α=16** | **74.56%** | 72.65% | **74.45%** | 74.35% | **74.00 ± 0.85%** |
+| M4 LoRA r=16 α=32 | 73.85% | 73.50% | 72.83% | 72.87% | 73.26 ± 0.43% |
+| **M5 CoOp→LoRA r=8 α=16** | **74.56%** | 72.65% | 74.45% | 74.35% | **74.00 ± 0.78%** |
 
-- M5 achieves a slightly higher mean accuracy than M4 in this 4-seed sample, but the overlap in standard deviations confirms the gain is modest.
-- The hybrid remains consistently competitive; larger seed counts would be needed to claim a statistically significant margin.
+This is the cleanest archived evidence for a small positive M5 gain over a well-tuned LoRA baseline.
 
-### How to interpret M5
+### Supplemental and exploratory runs
 
-The M5 result is meaningful only when compared against M2 and M4:
-
-```text
-M5_gain = M5_best - max(M2_best, M4_best)
-```
-
-- If `M5_gain > 0`: CoOp and LoRA are complementary, sequential stacking works.
-- If `M5_gain ≈ 0`: The two methods capture redundant information; no benefit from hybrid.
-- If `M5_gain < 0`: The second stage overwrites or corrupts the first stage's gains.
-
-At 8-shot, `M5_gain = 73.22% - max(67.78%, 71.56%) = +1.66%`, a small but positive margin. At full-data, `M5_gain = 96.05% - 95.63% = +0.42%`. The complementarity is real but modest when vision-side LoRA is already well-tuned.
+- `results/tables/supplemental_runs.csv` records extra completed variants that are not part of the main tables.
+- Two exploratory CLC runs are preserved under `outputs/exploratory/clc/` and indexed in `supplemental_runs.csv`.
+- The CLC artifacts are kept because they contain valid outputs, but `src/train_clc.py` is not present in the current repo snapshot, so they are documented as exploratory rather than fully reproducible.
 
 ### Data exploration outputs
 

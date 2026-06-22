@@ -1,0 +1,4 @@
+n_ctx,run_name,best_acc
+4,m5_8shot_nctx4_20ep,71.1560
+8,m5_8shot_nctx8_20ep,70.8709
+16,m5_8shot_base_20ep,73.2225

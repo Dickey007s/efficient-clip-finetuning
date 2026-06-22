@@ -1,0 +1,6 @@
+method,run_name,best_acc,trainable_params,schedule,status
+M1,m1_full,80.1029,22059,20 epochs,completed
+M2,m2_full,82.9533,8192,20 epochs,completed
+M3,m3_full,86.2787,131072,10 epochs,completed
+M4,m4_full,97.2526,147456,20 epochs,completed
+M5,m5_full,96.0491,155648,20 CoOp + 10 LoRA,completed
