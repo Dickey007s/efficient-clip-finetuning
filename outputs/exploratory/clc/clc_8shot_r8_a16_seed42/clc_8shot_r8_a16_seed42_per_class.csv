@@ -1,0 +1,44 @@
+class_id,class_name,accuracy
+0,speed limit 20,96.67
+1,speed limit 30,81.81
+2,speed limit 50,84.53
+3,speed limit 60,64.22
+4,speed limit 70,92.88
+5,speed limit 80,67.78
+6,end of speed limit 80,76.00
+7,speed limit 100,80.89
+8,speed limit 120,77.11
+9,no passing,81.46
+10,no passing for vehicles over 3.5 metric tons,49.70
+11,right-of-way at the next intersection,67.38
+12,priority road,86.52
+13,yield,93.47
+14,stop,89.63
+15,no vehicles,59.52
+16,vehicles over 3.5 metric tons prohibited,85.33
+17,no entry,73.61
+18,general caution,50.77
+19,dangerous curve to the left,35.00
+20,dangerous curve to the right,65.56
+21,double curve,37.78
+22,bumpy road,59.17
+23,slippery road,55.33
+24,road narrows on the right,70.00
+25,road work,70.83
+26,traffic signals,87.22
+27,pedestrians,80.00
+28,children crossing,77.33
+29,bicycles crossing,67.78
+30,beware of ice or snow,52.00
+31,wild animals crossing,65.56
+32,end of all speed and passing limits,83.33
+33,turn right ahead,68.10
+34,turn left ahead,82.50
+35,ahead only,86.41
+36,go straight or right,51.67
+37,go straight or left,53.33
+38,keep right,61.01
+39,keep left,61.11
+40,roundabout mandatory,90.00
+41,end of no passing,18.33
+42,end of no passing by vehicles over 3.5 metric tons,72.22

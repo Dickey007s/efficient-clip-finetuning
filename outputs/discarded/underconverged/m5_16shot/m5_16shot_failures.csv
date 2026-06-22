@@ -1,0 +1,101 @@
+image_idx,true_label,true_name,pred_label,pred_name
+19,38,keep right,39,keep left
+25,11,right-of-way at the next intersection,27,pedestrians
+29,11,right-of-way at the next intersection,26,traffic signals
+33,23,slippery road,31,wild animals crossing
+39,8,speed limit 120,4,speed limit 70
+41,30,beware of ice or snow,22,bumpy road
+45,25,road work,23,slippery road
+48,18,general caution,26,traffic signals
+50,25,road work,22,bumpy road
+51,13,yield,28,children crossing
+56,5,speed limit 80,1,speed limit 30
+72,30,beware of ice or snow,11,right-of-way at the next intersection
+78,25,road work,11,right-of-way at the next intersection
+79,25,road work,31,wild animals crossing
+81,33,turn right ahead,36,go straight or right
+97,38,keep right,42,end of no passing by vehicles over 3.5 metric tons
+114,30,beware of ice or snow,22,bumpy road
+117,29,bicycles crossing,11,right-of-way at the next intersection
+118,1,speed limit 30,8,speed limit 120
+122,1,speed limit 30,2,speed limit 50
+127,30,beware of ice or snow,28,children crossing
+129,6,end of speed limit 80,42,end of no passing by vehicles over 3.5 metric tons
+132,14,stop,7,speed limit 100
+142,6,end of speed limit 80,5,speed limit 80
+143,18,general caution,24,road narrows on the right
+145,25,road work,21,double curve
+152,11,right-of-way at the next intersection,26,traffic signals
+163,25,road work,26,traffic signals
+164,18,general caution,24,road narrows on the right
+169,17,no entry,10,no passing for vehicles over 3.5 metric tons
+171,38,keep right,42,end of no passing by vehicles over 3.5 metric tons
+175,1,speed limit 30,2,speed limit 50
+179,2,speed limit 50,1,speed limit 30
+183,25,road work,11,right-of-way at the next intersection
+184,20,dangerous curve to the right,19,dangerous curve to the left
+185,25,road work,27,pedestrians
+186,18,general caution,20,dangerous curve to the right
+187,1,speed limit 30,5,speed limit 80
+190,10,no passing for vehicles over 3.5 metric tons,15,no vehicles
+196,8,speed limit 120,2,speed limit 50
+197,38,keep right,33,turn right ahead
+198,18,general caution,11,right-of-way at the next intersection
+203,1,speed limit 30,8,speed limit 120
+207,31,wild animals crossing,25,road work
+233,18,general caution,20,dangerous curve to the right
+237,30,beware of ice or snow,28,children crossing
+242,20,dangerous curve to the right,19,dangerous curve to the left
+244,10,no passing for vehicles over 3.5 metric tons,9,no passing
+245,40,roundabout mandatory,34,turn left ahead
+249,38,keep right,34,turn left ahead
+250,20,dangerous curve to the right,19,dangerous curve to the left
+255,28,children crossing,29,bicycles crossing
+258,25,road work,26,traffic signals
+263,25,road work,28,children crossing
+265,12,priority road,10,no passing for vehicles over 3.5 metric tons
+268,2,speed limit 50,3,speed limit 60
+269,18,general caution,26,traffic signals
+270,18,general caution,24,road narrows on the right
+271,18,general caution,22,bumpy road
+275,18,general caution,22,bumpy road
+280,9,no passing,6,end of speed limit 80
+281,35,ahead only,37,go straight or left
+282,31,wild animals crossing,21,double curve
+283,26,traffic signals,11,right-of-way at the next intersection
+287,30,beware of ice or snow,31,wild animals crossing
+294,5,speed limit 80,8,speed limit 120
+305,3,speed limit 60,5,speed limit 80
+309,38,keep right,40,roundabout mandatory
+313,38,keep right,39,keep left
+314,1,speed limit 30,8,speed limit 120
+323,6,end of speed limit 80,41,end of no passing
+325,35,ahead only,37,go straight or left
+335,6,end of speed limit 80,42,end of no passing by vehicles over 3.5 metric tons
+336,7,speed limit 100,5,speed limit 80
+339,22,bumpy road,21,double curve
+342,9,no passing,10,no passing for vehicles over 3.5 metric tons
+356,35,ahead only,34,turn left ahead
+358,38,keep right,41,end of no passing
+361,38,keep right,10,no passing for vehicles over 3.5 metric tons
+363,39,keep left,33,turn right ahead
+367,38,keep right,10,no passing for vehicles over 3.5 metric tons
+368,19,dangerous curve to the left,20,dangerous curve to the right
+370,10,no passing for vehicles over 3.5 metric tons,5,speed limit 80
+371,18,general caution,24,road narrows on the right
+372,3,speed limit 60,5,speed limit 80
+376,41,end of no passing,42,end of no passing by vehicles over 3.5 metric tons
+380,19,dangerous curve to the left,21,double curve
+382,38,keep right,39,keep left
+391,33,turn right ahead,34,turn left ahead
+394,1,speed limit 30,4,speed limit 70
+395,5,speed limit 80,6,end of speed limit 80
+402,10,no passing for vehicles over 3.5 metric tons,9,no passing
+404,38,keep right,20,dangerous curve to the right
+427,20,dangerous curve to the right,19,dangerous curve to the left
+428,38,keep right,39,keep left
+437,10,no passing for vehicles over 3.5 metric tons,34,turn left ahead
+443,30,beware of ice or snow,28,children crossing
+447,38,keep right,0,speed limit 20
+448,38,keep right,39,keep left
+449,8,speed limit 120,4,speed limit 70

@@ -1,0 +1,101 @@
+image_idx,true_label,true_name,pred_label,pred_name
+33,23,slippery road,19,dangerous curve to the left
+39,8,speed limit 120,5,speed limit 80
+50,25,road work,21,double curve
+119,17,no entry,14,stop
+122,1,speed limit 30,2,speed limit 50
+163,25,road work,28,children crossing
+198,18,general caution,31,wild animals crossing
+265,12,priority road,13,yield
+266,5,speed limit 80,7,speed limit 100
+325,35,ahead only,37,go straight or left
+339,22,bumpy road,25,road work
+361,38,keep right,18,general caution
+367,38,keep right,13,yield
+394,1,speed limit 30,4,speed limit 70
+455,38,keep right,40,roundabout mandatory
+492,4,speed limit 70,2,speed limit 50
+513,22,bumpy road,31,wild animals crossing
+565,23,slippery road,31,wild animals crossing
+576,3,speed limit 60,2,speed limit 50
+604,3,speed limit 60,2,speed limit 50
+637,29,bicycles crossing,25,road work
+673,35,ahead only,41,end of no passing
+727,11,right-of-way at the next intersection,23,slippery road
+804,12,priority road,13,yield
+859,11,right-of-way at the next intersection,25,road work
+883,30,beware of ice or snow,28,children crossing
+894,35,ahead only,37,go straight or left
+908,38,keep right,11,right-of-way at the next intersection
+914,18,general caution,22,bumpy road
+939,12,priority road,13,yield
+957,36,go straight or right,37,go straight or left
+995,38,keep right,40,roundabout mandatory
+1013,10,no passing for vehicles over 3.5 metric tons,9,no passing
+1022,11,right-of-way at the next intersection,30,beware of ice or snow
+1078,11,right-of-way at the next intersection,25,road work
+1104,23,slippery road,31,wild animals crossing
+1140,8,speed limit 120,7,speed limit 100
+1177,18,general caution,19,dangerous curve to the left
+1182,31,wild animals crossing,21,double curve
+1209,11,right-of-way at the next intersection,23,slippery road
+1210,18,general caution,25,road work
+1260,5,speed limit 80,7,speed limit 100
+1275,8,speed limit 120,7,speed limit 100
+1276,18,general caution,19,dangerous curve to the left
+1277,14,stop,13,yield
+1284,11,right-of-way at the next intersection,25,road work
+1317,25,road work,11,right-of-way at the next intersection
+1364,8,speed limit 120,5,speed limit 80
+1390,8,speed limit 120,7,speed limit 100
+1422,30,beware of ice or snow,11,right-of-way at the next intersection
+1434,23,slippery road,31,wild animals crossing
+1496,38,keep right,11,right-of-way at the next intersection
+1514,30,beware of ice or snow,3,speed limit 60
+1557,28,children crossing,24,road narrows on the right
+1560,42,end of no passing by vehicles over 3.5 metric tons,41,end of no passing
+1682,17,no entry,14,stop
+1709,30,beware of ice or snow,23,slippery road
+1726,10,no passing for vehicles over 3.5 metric tons,9,no passing
+1781,38,keep right,11,right-of-way at the next intersection
+1817,18,general caution,31,wild animals crossing
+1820,5,speed limit 80,2,speed limit 50
+1865,21,double curve,11,right-of-way at the next intersection
+1947,18,general caution,31,wild animals crossing
+1969,40,roundabout mandatory,18,general caution
+1976,30,beware of ice or snow,26,traffic signals
+1994,11,right-of-way at the next intersection,25,road work
+2002,8,speed limit 120,5,speed limit 80
+2035,35,ahead only,37,go straight or left
+2065,18,general caution,27,pedestrians
+2112,18,general caution,27,pedestrians
+2176,17,no entry,14,stop
+2219,28,children crossing,25,road work
+2235,8,speed limit 120,5,speed limit 80
+2311,35,ahead only,36,go straight or right
+2316,21,double curve,11,right-of-way at the next intersection
+2342,18,general caution,19,dangerous curve to the left
+2378,25,road work,11,right-of-way at the next intersection
+2425,18,general caution,11,right-of-way at the next intersection
+2432,35,ahead only,37,go straight or left
+2460,11,right-of-way at the next intersection,25,road work
+2479,31,wild animals crossing,22,bumpy road
+2482,25,road work,11,right-of-way at the next intersection
+2496,3,speed limit 60,2,speed limit 50
+2509,5,speed limit 80,7,speed limit 100
+2518,17,no entry,14,stop
+2545,17,no entry,14,stop
+2554,9,no passing,1,speed limit 30
+2577,4,speed limit 70,1,speed limit 30
+2601,38,keep right,11,right-of-way at the next intersection
+2725,35,ahead only,2,speed limit 50
+2751,24,road narrows on the right,25,road work
+2754,38,keep right,40,roundabout mandatory
+2787,31,wild animals crossing,25,road work
+2803,5,speed limit 80,7,speed limit 100
+2836,5,speed limit 80,1,speed limit 30
+2860,5,speed limit 80,7,speed limit 100
+2896,12,priority road,13,yield
+2898,15,no vehicles,10,no passing for vehicles over 3.5 metric tons
+2907,17,no entry,14,stop
+2918,23,slippery road,31,wild animals crossing
