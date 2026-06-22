@@ -198,13 +198,13 @@ The cleaned tables under `results/tables/` are the source of truth for the curre
 
 ### Few-shot coverage matrix
 
-Blank entries are still pending and are intentionally left empty so future runs can be added directly.
+Blank entries are still pending and are intentionally left empty so future runs can be added directly. The filled 8-shot cells use the strongest converged archived run for each method; parameter-matched r=4 values are kept in the ablation tables below.
 
 | Setting | M1 | M2 | M3 | M4 | M5 |
 |--------|----|----|----|----:|----:|
 | full    | 80.10% | 82.95% | 86.28% | **97.25%** | 96.05% |
 | 16-shot | 48.23% | 67.37% | 62.49% | **79.46%** |        |
-| 8-shot  |        |        |        | 65.99% | **73.22%** |
+| 8-shot  |        |        |        | 73.85% | **74.56%** |
 | 4-shot  |        |        |        |        | **69.16%** |
 
 The corresponding placeholder list is stored in `results/tables/pending_experiments.csv`.
@@ -214,10 +214,10 @@ The corresponding placeholder list is stored in `results/tables/pending_experime
 | Setting | M4 LoRA | M5 CoOp→LoRA | Gain / status |
 |---------|--------:|-------------:|---------------|
 | 4-shot  | pending | **69.16%** | M4 short run discarded |
-| 8-shot  | 65.99% | **73.22%** | **+7.23 pp** |
+| 8-shot  | 73.85% | **74.56%** | **+0.71 pp** |
 | 16-shot | **79.46%** | pending | M5 short run discarded |
 
-The earlier short-run 4-shot/8-shot values are not used here because they did not converge enough to support the claim. With the current usable artifacts, the clean direct M4-vs-M5 comparison is the 8-shot row; the 4-shot M4 and 16-shot M5 cells are intentionally pending.
+The earlier short-run 4-shot/8-shot values are not used here because they did not converge enough to support the claim. With the current usable artifacts, the clean direct best-archived M4-vs-M5 comparison is the 8-shot row; it shows only a small M5 edge, consistent with the multi-seed table below. The 4-shot M4 and 16-shot M5 cells are intentionally pending.
 
 ### M4 LoRA rank sweep (8-shot, 20 epochs)
 

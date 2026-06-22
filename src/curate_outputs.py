@@ -67,8 +67,8 @@ MAIN_RUN_LAYOUT = {
         "M1": "",
         "M2": "",
         "M3": "",
-        "M4": "m4_8shot_r4_a8_20ep",
-        "M5": "m5_8shot_base_20ep",
+        "M4": "m4_8shot_r16_a32_20ep",
+        "M5": "m5_8shot_r8_a16_20ep",
     },
     "4-shot": {
         "M1": "",
@@ -81,9 +81,9 @@ MAIN_RUN_LAYOUT = {
 
 EXCLUDED_RUNS = {
     "m4_4shot": "LoRA ran only 10 epochs and accuracy was still near its initial plateau; no converged replacement is archived.",
-    "m4_8shot": "Superseded by m4_8shot_r4_a8_20ep; the 10-epoch run was still climbing.",
+    "m4_8shot": "Superseded by converged 20-epoch tuned runs; the 10-epoch run was still climbing.",
     "m5_4shot": "Superseded by m5_4shot_r4_a8_lora20; the 10-epoch LoRA stage was still climbing.",
-    "m5_8shot": "Superseded by m5_8shot_base_20ep; the 10-epoch LoRA stage was still climbing.",
+    "m5_8shot": "Superseded by converged 20-epoch tuned runs; the 10-epoch LoRA stage was still climbing.",
     "m5_16shot": "LoRA ran only 10 epochs and was still climbing at the final epoch; rerun with a longer LoRA stage before using as a main result.",
 }
 
