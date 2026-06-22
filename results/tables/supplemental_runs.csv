@@ -1,5 +1,4 @@
 run_name,method,category,best_acc,schedule,artifact_dir,status
-m5_4shot_r4_a8_lora20,M5 CoOp->LoRA,supplemental/m5_schedule_lr,69.1607,20 CoOp + 20 LoRA,outputs\supplemental\m5_schedule_lr\m5_4shot_r4_a8_lora20,completed
 m5_8shot_r1_a2_20ep,M5 CoOp->LoRA,supplemental/m5_rank,68.4323,20 CoOp + 20 LoRA,outputs\supplemental\m5_rank\m5_8shot_r1_a2_20ep,completed
 m5_8shot_r4_lr1e-5_20ep,M5 CoOp->LoRA,supplemental/m5_schedule_lr,59.4616,20 CoOp + 10 LoRA,outputs\supplemental\m5_schedule_lr\m5_8shot_r4_lr1e-5_20ep,completed
 m5_8shot_r4_lr3e-5_20ep,M5 CoOp->LoRA,supplemental/m5_schedule_lr,64.5685,20 CoOp + 10 LoRA,outputs\supplemental\m5_schedule_lr\m5_8shot_r4_lr3e-5_20ep,completed

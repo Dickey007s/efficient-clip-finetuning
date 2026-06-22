@@ -5,4 +5,6 @@ setting,method,status,planned_run_name,note
 4-shot,M1,pending,,README few-shot matrix has no archived run yet.
 4-shot,M2,pending,,README few-shot matrix has no archived run yet.
 4-shot,M3,pending,,README few-shot matrix has no archived run yet.
+4-shot,M4,pending,,m4_4shot was discarded because the short run did not converge.
+16-shot,M5,pending,,m5_16shot was discarded because the 10-epoch LoRA stage was still climbing.
 zero-shot,M0,not_archived,,"check_clip.py provides a sanity check, but no full-test artifact is stored in outputs/."

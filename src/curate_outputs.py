@@ -61,22 +61,30 @@ MAIN_RUN_LAYOUT = {
         "M2": "m2_16shot",
         "M3": "m3_16shot",
         "M4": "m4_16shot",
-        "M5": "m5_16shot",
+        "M5": "",
     },
     "8-shot": {
         "M1": "",
         "M2": "",
         "M3": "",
-        "M4": "m4_8shot",
-        "M5": "m5_8shot",
+        "M4": "m4_8shot_r4_a8_20ep",
+        "M5": "m5_8shot_base_20ep",
     },
     "4-shot": {
         "M1": "",
         "M2": "",
         "M3": "",
-        "M4": "m4_4shot",
-        "M5": "m5_4shot",
+        "M4": "",
+        "M5": "m5_4shot_r4_a8_lora20",
     },
+}
+
+EXCLUDED_RUNS = {
+    "m4_4shot": "LoRA ran only 10 epochs and accuracy was still near its initial plateau; no converged replacement is archived.",
+    "m4_8shot": "Superseded by m4_8shot_r4_a8_20ep; the 10-epoch run was still climbing.",
+    "m5_4shot": "Superseded by m5_4shot_r4_a8_lora20; the 10-epoch LoRA stage was still climbing.",
+    "m5_8shot": "Superseded by m5_8shot_base_20ep; the 10-epoch LoRA stage was still climbing.",
+    "m5_16shot": "LoRA ran only 10 epochs and was still climbing at the final epoch; rerun with a longer LoRA stage before using as a main result.",
 }
 
 
@@ -88,6 +96,8 @@ def strip_artifact_suffix(filename: str) -> str:
 
 
 def classify_run(run_name: str) -> tuple[str, str]:
+    if run_name in EXCLUDED_RUNS:
+        return "discarded/underconverged", "discarded"
     if run_name.startswith("clc_"):
         return "exploratory/clc", "exploratory"
     if run_name.startswith("m5d_"):
@@ -109,11 +119,13 @@ def classify_run(run_name: str) -> tuple[str, str]:
         return "ablations/m4_learning_rate", "completed"
     if run_name.startswith("m4_8shot_r"):
         return "ablations/m4_rank", "completed"
+    if run_name == "m5_4shot_r4_a8_lora20":
+        return "main/m5", "completed"
     if run_name.startswith("m5_8shot_nctx") or run_name == "m5_8shot_base_20ep":
         return "ablations/m5_prompt_length", "completed"
     if run_name.startswith("m5_8shot_r1_a2_20ep"):
         return "supplemental/m5_rank", "completed"
-    if run_name.startswith("m5_8shot_r4_lr") or run_name.startswith("m5_4shot_r4_a8_lora20"):
+    if run_name.startswith("m5_8shot_r4_lr"):
         return "supplemental/m5_schedule_lr", "completed"
     match = re.match(r"^(m[1-5])_", run_name)
     if match:
@@ -147,7 +159,7 @@ def parse_rank(run_name: str) -> str:
 
 def infer_schedule(run_name: str) -> str:
     if run_name == "m5_4shot_r4_a8_lora20":
-        return "20 CoOp + 20 LoRA"
+        return "20 CoOp + 40 LoRA"
     if run_name == "clc_8shot_r8_a16_seed42":
         return "10 CoOp + 20 LoRA + 10 CoOp"
     if run_name == "clc_8shot_r8_a16_20_20_10_seed42":
@@ -543,6 +555,24 @@ def generate_pending_table(runs: dict[str, dict]) -> None:
                     "README few-shot matrix has no archived run yet.",
                 ]
             )
+    pending_rows.extend(
+        [
+            [
+                "4-shot",
+                "M4",
+                "pending",
+                "",
+                "m4_4shot was discarded because the short run did not converge.",
+            ],
+            [
+                "16-shot",
+                "M5",
+                "pending",
+                "",
+                "m5_16shot was discarded because the 10-epoch LoRA stage was still climbing.",
+            ],
+        ]
+    )
     pending_rows.append(
         [
             "zero-shot",
@@ -559,9 +589,29 @@ def generate_pending_table(runs: dict[str, dict]) -> None:
     )
 
 
+def generate_excluded_table(runs: dict[str, dict]) -> None:
+    rows = []
+    for run_name, reason in EXCLUDED_RUNS.items():
+        info = runs.get(run_name, {})
+        rows.append(
+            [
+                run_name,
+                info.get("method_label", ""),
+                info.get("shots", ""),
+                info.get("best_acc", ""),
+                info.get("schedule", ""),
+                reason,
+            ]
+        )
+    write_csv(
+        "excluded_underconverged_runs.csv",
+        ["run_name", "method", "shots", "best_acc", "schedule", "reason"],
+        rows,
+    )
+
+
 def generate_supplemental_table(runs: dict[str, dict]) -> None:
     keep = [
-        "m5_4shot_r4_a8_lora20",
         "m5_8shot_r1_a2_20ep",
         "m5_8shot_r4_lr1e-5_20ep",
         "m5_8shot_r4_lr3e-5_20ep",
@@ -603,6 +653,7 @@ def main() -> None:
     generate_m5_tables(runs)
     generate_multi_seed_table(runs)
     generate_pending_table(runs)
+    generate_excluded_table(runs)
     generate_supplemental_table(runs)
 
     print(f"[Curate] Moved {len(moved)} files into structured outputs/.")

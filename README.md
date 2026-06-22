@@ -46,15 +46,15 @@ efficiency for adapting CLIP to traffic-sign recognition.
 
 Conducted ablation studies:
 
-- **Main archived runs** for M1-M5 on full data and at 16-shot.
-- **Low-shot archived runs** for M4/M5 at 4-shot and 8-shot. M1/M2/M3 low-shot runs are still pending and are left blank in the summary tables.
+- **Main archived runs** for M1-M5 on full data, M1-M4 at 16-shot, M4/M5 at 8-shot, and M5 at 4-shot.
+- **Pending low-shot runs** for M1/M2/M3 at 4-shot and 8-shot, M4 at 4-shot, and M5 at 16-shot. These entries are intentionally left blank until converged runs are available.
 - **LoRA rank sweep** at r = 1, 4, 8, 16 for M4 (8-shot, 20 epochs).
 - **LoRA learning-rate sweep** at 1e-5, 3e-5, 5e-5, 1e-4 for M4 (8-shot, r=8, 20 epochs).
 - **M5 prompt-length sweep** at n_ctx = 4, 8, 16 (8-shot, 20 epochs).
 - **Stage-ordering ablation**: CoOp→LoRA (M5c) vs. LoRA→CoOp (M5d).
 - **Multi-seed validation** for M4 and M5 at 8-shot.
 - Failure-case analysis with per-class accuracy and confusion matrices (see `outputs/`).
-- Supplemental and exploratory artifacts are preserved separately, including extra M5 schedule/rank runs and two CLC runs whose source script is not present in the current repo snapshot.
+- Supplemental, exploratory, and discarded underconverged artifacts are preserved separately, including extra M5 schedule/rank runs and two CLC runs whose source script is not present in the current repo snapshot.
 
 ### CoOp-LoRA (M5)
 
@@ -72,7 +72,7 @@ Conducted ablation studies:
 - M5c: CoOp then LoRA (the proposed method, verifies sequential stacking).
 - M5d: LoRA then CoOp (reversed order, verifies stage ordering matters; see `train_m5d.py`).
 
-**How to read the M5 result**: The main diagnostic is still `M5_best > max(M2_best, M4_best)`, but it should be evaluated per setting rather than treated as a universal rule. In this snapshot, the positive evidence is concentrated in 4-shot, 8-shot, and the matched 8-shot multi-seed study.
+**How to read the M5 result**: The main diagnostic is still `M5_best > max(M2_best, M4_best)`, but it should be evaluated per setting rather than treated as a universal rule. Runs whose accuracy was still clearly rising at the final epoch are excluded from the main claims. In this snapshot, the usable positive evidence is concentrated in the converged 4-shot M5 run, the 8-shot comparisons, and the matched 8-shot multi-seed study.
 
 ---
 
@@ -172,7 +172,7 @@ Alternative download sources when torchvision is slow:
 
 ## Results
 
-The cleaned tables under `results/tables/` are the source of truth for the current repo snapshot. Numbers below use the archived **best checkpoint** for each run, not the final epoch when those differ.
+The cleaned tables under `results/tables/` are the source of truth for the current repo snapshot. Numbers below use the archived **best checkpoint** for each run, not the final epoch when those differ. Short runs that were still clearly underconverged are excluded from the main tables and listed separately in `results/tables/excluded_underconverged_runs.csv`.
 
 ### 16-shot (688 training samples)
 
@@ -182,7 +182,7 @@ The cleaned tables under `results/tables/` are the source of truth for the curre
 | M2 CoOp | 67.37% | 8,192 | Text-side optimization |
 | M3 CLIP-Adapter | 62.49% | 131,072 | Frozen CLIP + image adapter |
 | **M4 LoRA (r=4)** | **79.46%** | **147,456** | Best archived 16-shot run |
-| M5 CoOp→LoRA | 79.26% | 155,648 | Slightly below M4 on this setting |
+| M5 CoOp→LoRA | pending | pending | The archived 10-epoch LoRA-stage run was still climbing and is excluded |
 
 ### Full-data (26,640 training samples)
 
@@ -194,7 +194,7 @@ The cleaned tables under `results/tables/` are the source of truth for the curre
 | **M4 LoRA (r=4)** | **97.25%** | **147,456** | Best archived full-data result |
 | M5 CoOp→LoRA | 96.05% | 155,648 | 20 CoOp + 10 LoRA |
 
-**What the archived artifacts support**: M5 is clearly useful in low-data regimes, but the cleaned full-data and 16-shot checkpoints do **not** support a blanket claim that M5 always beats M4. In this snapshot, M4 is best at 16-shot and on full data, while M5 is strongest at the very low-shot settings and remains slightly ahead in the matched 8-shot multi-seed study.
+**What the archived artifacts support**: M5 is useful in the converged low-data runs, but the cleaned full-data result does **not** support a blanket claim that M5 always beats M4. The 16-shot M5 run is currently pending because the available artifact did not converge enough to support a main-result claim.
 
 ### Few-shot coverage matrix
 
@@ -203,21 +203,21 @@ Blank entries are still pending and are intentionally left empty so future runs 
 | Setting | M1 | M2 | M3 | M4 | M5 |
 |--------|----|----|----|----:|----:|
 | full    | 80.10% | 82.95% | 86.28% | **97.25%** | 96.05% |
-| 16-shot | 48.23% | 67.37% | 62.49% | **79.46%** | 79.26% |
-| 8-shot  |        |        |        | 43.08% | **67.78%** |
-| 4-shot  |        |        |        | 30.70% | **55.40%** |
+| 16-shot | 48.23% | 67.37% | 62.49% | **79.46%** |        |
+| 8-shot  |        |        |        | 65.99% | **73.22%** |
+| 4-shot  |        |        |        |        | **69.16%** |
 
 The corresponding placeholder list is stored in `results/tables/pending_experiments.csv`.
 
-### 4-shot vs. 8-shot main runs (M4 vs. M5)
+### Usable low-shot main runs (M4 vs. M5)
 
-| Setting | M4 LoRA | M5 CoOp→LoRA | Gain |
-|---------|--------:|-------------:|-----:|
-| 4-shot  | 30.70%  | **55.40%**   | **+24.70 pp** |
-| 8-shot  | 43.08%  | **67.78%**   | **+24.70 pp** |
-| 16-shot | **79.46%** | 79.26%    | −0.20 pp |
+| Setting | M4 LoRA | M5 CoOp→LoRA | Gain / status |
+|---------|--------:|-------------:|---------------|
+| 4-shot  | pending | **69.16%** | M4 short run discarded |
+| 8-shot  | 65.99% | **73.22%** | **+7.23 pp** |
+| 16-shot | **79.46%** | pending | M5 short run discarded |
 
-The hybrid advantage is dramatic at 4-shot and 8-shot in the main archived runs, then disappears at 16-shot.
+The earlier short-run 4-shot/8-shot values are not used here because they did not converge enough to support the claim. With the current usable artifacts, the clean direct M4-vs-M5 comparison is the 8-shot row; the 4-shot M4 and 16-shot M5 cells are intentionally pending.
 
 ### M4 LoRA rank sweep (8-shot, 20 epochs)
 
@@ -268,6 +268,7 @@ This is the cleanest archived evidence for a small positive M5 gain over a well-
 ### Supplemental and exploratory runs
 
 - `results/tables/supplemental_runs.csv` records extra completed variants that are not part of the main tables.
+- `results/tables/excluded_underconverged_runs.csv` records short runs that are retained for traceability but excluded from the main claims.
 - Two exploratory CLC runs are preserved under `outputs/exploratory/clc/` and indexed in `supplemental_runs.csv`.
 - The CLC artifacts are kept because they contain valid outputs, but `src/train_clc.py` is not present in the current repo snapshot, so they are documented as exploratory rather than fully reproducible.
 
