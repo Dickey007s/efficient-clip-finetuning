@@ -18,7 +18,6 @@ LoRA 注入工具：为 open_clip ViT 的 attention Q/V 投影注入低秩适配
     2) Q/V 能被 LoRA 适配，参数量约 147K (rank=4, 12层)
     3) 与论文中 LoRA 微调 attention 的标准做法一致
 """
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -119,10 +118,13 @@ class AttentionWithLoRA(nn.Module):
         k = self.k_proj(key).reshape(N, L, h, dh).transpose(1, 2)
         v = self.v_proj(value).reshape(N, L, h, dh).transpose(1, 2)
 
-        scale = 1.0 / math.sqrt(dh)
-        attn = torch.matmul(q, k.transpose(-2, -1)) * scale  # [N, h, L, L]
-        attn = attn.softmax(dim=-1)
-        out = torch.matmul(attn, v)  # [N, h, L, dh]
+        out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=0.0,
+        )
         out = out.transpose(1, 2).reshape(N, L, D)  # [N, L, D]
         out = self.out_proj(out)
 

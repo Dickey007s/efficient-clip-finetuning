@@ -32,7 +32,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
 import open_clip
+from checkpoint_utils import load_lora_checkpoint
 from lora_utils import inject_lora_into_visual
+from perf_utils import (
+    autocast_context,
+    configure_torch_runtime,
+    dataloader_kwargs,
+    make_grad_scaler,
+    move_to_device,
+)
 from torch.utils.data import DataLoader
 from torchvision.datasets import GTSRB
 from torchvision import transforms
@@ -113,7 +121,7 @@ def create_few_shot_subset(dataset, shots_per_class, seed=42):
     return torch.utils.data.Subset(dataset, selected)
 
 
-def load_data(batch_size=64, shots_per_class=None):
+def load_data(batch_size=64, shots_per_class=None, num_workers=2, pin_memory=None):
     preprocess = get_preprocess()
     train_raw = GTSRB(root=str(DATA_ROOT), split="train", download=False)
     test_raw = GTSRB(root=str(DATA_ROOT), split="test", download=False)
@@ -128,10 +136,11 @@ def load_data(batch_size=64, shots_per_class=None):
     train_set = WrappedDataset(train_raw, preprocess)
     test_set = WrappedDataset(test_raw, preprocess)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
-                             num_workers=0, pin_memory=False)
+    if pin_memory is None:
+        pin_memory = DEVICE.type == "cuda"
+    loader_kwargs = dataloader_kwargs(num_workers=num_workers, pin_memory=pin_memory)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, **loader_kwargs)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, **loader_kwargs)
     return train_loader, test_loader
 
 
@@ -176,8 +185,8 @@ def evaluate(model, text_features, test_loader):
     model.eval()
     correct, total = 0, 0
     for images, labels in test_loader:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        with torch.amp.autocast('cuda'):
+        images, labels = move_to_device(images, labels, device=DEVICE)
+        with autocast_context(DEVICE):
             image_features = model.encode_image(images)
             image_features = F.normalize(image_features, dim=-1)
             logits = 100.0 * image_features @ text_features.t()
@@ -193,8 +202,8 @@ def evaluate_acc(model, text_features, test_loader):
     model.eval()
     correct, total = 0, 0
     for images, labels in test_loader:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        with torch.amp.autocast('cuda'):
+        images, labels = move_to_device(images, labels, device=DEVICE)
+        with autocast_context(DEVICE):
             image_features = model.encode_image(images)
             image_features = F.normalize(image_features, dim=-1)
             logits = 100.0 * image_features @ text_features.t()
@@ -216,8 +225,8 @@ def evaluate_detailed(model, text_features, test_loader):
     
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(test_loader):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            with torch.amp.autocast('cuda'):
+            images, labels = move_to_device(images, labels, device=DEVICE)
+            with autocast_context(DEVICE):
                 image_features = model.encode_image(images)
                 image_features = F.normalize(image_features, dim=-1)
                 logits = 100.0 * image_features @ text_features.t()
@@ -305,9 +314,9 @@ def train_epoch(model, text_features, train_loader, optimizer, scaler, criterion
     model.train()
     total_loss = 0.0
     for images, labels in train_loader:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        optimizer.zero_grad()
-        with torch.amp.autocast('cuda'):
+        images, labels = move_to_device(images, labels, device=DEVICE)
+        optimizer.zero_grad(set_to_none=True)
+        with autocast_context(DEVICE):
             image_features = model.encode_image(images)
             image_features = F.normalize(image_features, dim=-1)
             logits = 100.0 * image_features @ text_features.t()
@@ -329,11 +338,15 @@ def main():
     parser.add_argument("--alpha", type=int, default=8, help="LoRA alpha")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save", type=str, default="outputs/m4_lora.pt")
+    parser.add_argument("--lora_ckpt", type=str, default=None, help="Warm-start LoRA weights from checkpoint")
+    parser.add_argument("--num_workers", type=int, default=2, help="DataLoader workers")
+    parser.add_argument("--no_pin_memory", action="store_true", help="Disable pinned-memory host transfers")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
+    configure_torch_runtime(DEVICE)
 
     # 重定向 stdout 到 Logger
     logger = Logger()
@@ -346,10 +359,18 @@ def main():
     print("=" * 60)
 
     # 加载数据
-    train_loader, test_loader = load_data(args.batch_size, args.shots)
+    train_loader, test_loader = load_data(
+        args.batch_size,
+        args.shots,
+        num_workers=args.num_workers,
+        pin_memory=DEVICE.type == "cuda" and not args.no_pin_memory,
+    )
 
     # 加载 CLIP + LoRA
     clip_model = load_clip_with_lora(rank=args.rank, alpha=args.alpha)
+    if args.lora_ckpt is not None:
+        loaded, skipped = load_lora_checkpoint(clip_model, args.lora_ckpt, DEVICE)
+        print(f"[Checkpoint] Loaded {loaded} LoRA tensors from {args.lora_ckpt} ({skipped} skipped).")
     tokenizer = open_clip.get_tokenizer("ViT-B-32")
 
     # 预计算 text features（冻结）
@@ -359,7 +380,7 @@ def main():
     # 优化器（只优化 LoRA 参数）
     lora_params = [p for p in clip_model.parameters() if p.requires_grad]
     optimizer = AdamW(lora_params, lr=args.lr, weight_decay=1e-4)
-    scaler = torch.amp.GradScaler('cuda')
+    scaler = make_grad_scaler(DEVICE)
     criterion = nn.CrossEntropyLoss()
 
     # 训练循环
@@ -367,6 +388,15 @@ def main():
     best_lora_state = None
     t_start = time.time()
     metrics = []  # [epoch, loss, test_acc]
+
+    if args.lora_ckpt is not None:
+        best_acc = evaluate_acc(clip_model, text_features, test_loader)
+        best_lora_state = {
+            n: p.detach().cpu().clone()
+            for n, p in clip_model.named_parameters()
+            if p.requires_grad
+        }
+        print(f"[Checkpoint] Warm-start accuracy before training: {best_acc:.2f}%")
 
     for epoch in range(args.epochs):
         t0 = time.time()

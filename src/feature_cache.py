@@ -12,6 +12,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
+from perf_utils import autocast_context, dataloader_kwargs
+
 
 class FeatureDataset(Dataset):
     def __init__(self, features, labels):
@@ -32,12 +34,9 @@ def precompute_image_features(clip_model, image_loader, device, name="train", us
     all_labels = []
     print(f"[Precompute] Encoding {name} image features...")
     t0 = time.time()
-    amp_enabled = use_amp and device.type == "cuda"
-
     for batch_idx, (images, labels) in enumerate(image_loader):
         images = images.to(device, non_blocking=True)
-        ctx = torch.amp.autocast("cuda") if amp_enabled else contextlib.nullcontext()
-        with ctx:
+        with autocast_context(device) if use_amp else contextlib.nullcontext():
             features = clip_model.encode_image(images)
             features = F.normalize(features, dim=-1)
         all_features.append(features.float().cpu())
@@ -55,19 +54,31 @@ def precompute_image_features(clip_model, image_loader, device, name="train", us
     return features, labels
 
 
-def make_feature_loaders(train_features, train_labels, test_features, test_labels, batch_size):
+def make_feature_loaders(
+    train_features,
+    train_labels,
+    test_features,
+    test_labels,
+    batch_size,
+    device=None,
+):
+    if device is not None and device.type == "cuda":
+        train_features = train_features.to(device)
+        train_labels = train_labels.to(device)
+        test_features = test_features.to(device)
+        test_labels = test_labels.to(device)
+        print("[Precompute] Cached feature tensors kept on GPU for CoOp training.")
+
     train_loader = DataLoader(
         FeatureDataset(train_features, train_labels),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
-        pin_memory=False,
+        **dataloader_kwargs(num_workers=0, pin_memory=False),
     )
     test_loader = DataLoader(
         FeatureDataset(test_features, test_labels),
         batch_size=batch_size,
         shuffle=False,
-        num_workers=0,
-        pin_memory=False,
+        **dataloader_kwargs(num_workers=0, pin_memory=False),
     )
     return train_loader, test_loader
