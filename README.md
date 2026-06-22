@@ -96,34 +96,19 @@ The `data/` directory is excluded from version control and is created by
 
 ## Environment Setup
 
-Verified configuration:
+Tested environment:
 
-- Windows 11
-- Python 3.13
-- CUDA 13.0
-- NVIDIA RTX 4060 Laptop GPU, 8 GB
-- conda environment named `QuantAI`
+- Python 3.10+
+- PyTorch 2.x with a CUDA-capable GPU
+- 8 GB GPU memory is sufficient for the full-data experiments
 
-Option A. Reuse the existing conda environment:
+Create a fresh conda environment:
 
 ```cmd
-C:\Users\<you>\miniconda3\Scripts\activate QuantAI
-```
-
-Option B. Create a fresh environment:
-
-```cmd
-conda create -n clip-tsn python=3.13 -y
+conda create -n clip-tsn python=3.10 -y
 conda activate clip-tsn
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+pip install torch torchvision
 pip install -r requirements.txt
-```
-
-On Windows, if you encounter `OMP: Error #15`, set the following before running
-any script:
-
-```cmd
-set KMP_DUPLICATE_LIB_OK=TRUE
 ```
 
 ---
@@ -192,8 +177,8 @@ M5 outperforms both individual methods, suggesting that text-side prompt adaptat
 
 | Method | Test Top-1 | Trainable Params | Notes |
 |--------|------------|------------------|-------|
-| M1 Linear Probe | 74.09% | ~22 K | Full-data head tuning |
-| M5 CoOp→LoRA | **pending** | ~156 K | Sequential hybrid |
+| M1 Linear Probe | 80.10% | ~22 K | Full-data head tuning (20 epochs) |
+| M5 CoOp→LoRA | **96.05%** | ~156 K | Sequential hybrid (10 CoOp + 10 LoRA epochs) |
 
 ### How to interpret M5
 
