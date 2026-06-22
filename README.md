@@ -46,7 +46,7 @@ efficiency for adapting CLIP to traffic-sign recognition.
 
 Conducted ablation studies:
 
-- **Few-shot learning curves** at 4, 8, and 16 shots per class for M1/M2/M4/M5.
+- **Few-shot learning curves** at 4, 8, and 16 shots per class for M1/M2/M3/M4/M5.
 - **LoRA rank sweep** at r = 1, 4, 8, 16 (8-shot, 20 epochs).
 - **LoRA learning-rate sweep** at 1e-5, 3e-5, 5e-5, 1e-4 (8-shot, r=8, 20 epochs).
 - **M5 prompt-length sweep** at n_ctx = 4, 8, 16 (8-shot, 20 epochs).
@@ -182,14 +182,25 @@ Alternative download sources when torchvision is slow:
 
 Test accuracy vs. number of shots per class (single seed):
 
-| Shots | M1 Linear Probe | M2 CoOp | M4 LoRA (r=4) | M5 CoOp→LoRA |
-|------:|----------------:|--------:|--------------:|-------------:|
-| 4     | —               | —       | 30.70%        | 55.40%       |
-| 8     | —               | —       | 43.08%        | 67.78%       |
-| 16    | 47.99%          | 67.37%  | **79.46%**    | 79.26%       |
+| Shots | M1 Linear Probe | M2 CoOp | M3 CLIP-Adapter | M4 LoRA (r=4) | M5 CoOp→LoRA |
+|------:|----------------:|--------:|----------------:|--------------:|-------------:|
+| 4     | —               | —       | —               | 30.70%        | **55.40%**   |
+| 8     | —               | —       | —               | 43.08%        | **67.78%**   |
+| 16    | 47.99%          | 67.37%  | 62.49%          | **79.46%**    | 79.26%       |
 
-- M4 and M5 benefit strongly from more shots; both jump by ~12 pp from 8 to 16 shots.
-- M5 consistently outperforms M4 at 4 and 8 shots, but the advantage shrinks at 16 shots, suggesting that with enough examples vision-side LoRA alone is already strong.
+- At 4-shot and 8-shot, M5 substantially outperforms M4 (+24.7 pp and +24.7 pp), indicating that the CoOp text anchor is especially helpful when visual supervision is scarce.
+- At 16-shot the gap closes: vision-side LoRA alone is already strong, and the additional text-side optimization gives only a marginal (or even slightly negative in this seed) edge.
+- M1/M2/M3 were only evaluated at 16 shots; their shallow/frozen-encoder designs need more examples to reach competitive accuracy.
+
+### 4-shot vs. 8-shot comparison (M4 vs. M5)
+
+| Setting | M4 LoRA (r=4) | M5 CoOp→LoRA | M5 gain |
+|---------|--------------:|-------------:|--------:|
+| 4-shot  | 30.70%        | 55.40%       | **+24.70%** |
+| 8-shot  | 43.08%        | 67.78%       | **+24.70%** |
+| 16-shot | 79.46%        | 79.26%       | −0.20% |
+
+The hybrid gain is large and stable under 4-shot and 8-shot, then vanishes at 16-shot. This suggests the complementarity is strongest in the extremely low-data regime.
 
 ### LoRA rank sweep (8-shot, 20 epochs)
 
