@@ -3,4 +3,4 @@ M1,m1_16shot,48.2264,22059,20 epochs,completed
 M2,m2_16shot,67.3713,8192,20 epochs,completed
 M3,m3_16shot,62.4941,131072,20 epochs,completed
 M4,m4_16shot,79.4616,147456,20 epochs,completed
-M5,,,,,pending
+M5,m5_16shot_lora40_r4_a8,81.6706,155648,Pretrained CoOp + 20 LoRA,completed

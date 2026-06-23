@@ -61,7 +61,7 @@ MAIN_RUN_LAYOUT = {
         "M2": "m2_16shot",
         "M3": "m3_16shot",
         "M4": "m4_16shot",
-        "M5": "",
+        "M5": "m5_16shot_lora40_r4_a8",
     },
     "8-shot": {
         "M1": "",
@@ -74,7 +74,7 @@ MAIN_RUN_LAYOUT = {
         "M1": "",
         "M2": "",
         "M3": "",
-        "M4": "",
+        "M4": "m4_4shot_r4_a8_60ep_seed42",
         "M5": "m5_4shot_r4_a8_lora20",
     },
 }
@@ -160,6 +160,14 @@ def parse_rank(run_name: str) -> str:
 def infer_schedule(run_name: str) -> str:
     if run_name == "m5_4shot_r4_a8_lora20":
         return "20 CoOp + 40 LoRA"
+    if run_name == "m5_16shot_lora40_r4_a8":
+        return "Pretrained CoOp + 20 LoRA"
+    if run_name == "m4_4shot_r4_a8_40ep_seed42":
+        return "40 epochs"
+    if run_name == "m4_4shot_r4_a8_50ep_seed42":
+        return "50 epochs (checkpoint-chained from 40ep)"
+    if run_name == "m4_4shot_r4_a8_60ep_seed42":
+        return "60 epochs (checkpoint-chained from 50ep)"
     if run_name == "clc_8shot_r8_a16_seed42":
         return "10 CoOp + 20 LoRA + 10 CoOp"
     if run_name == "clc_8shot_r8_a16_20_20_10_seed42":
@@ -555,24 +563,6 @@ def generate_pending_table(runs: dict[str, dict]) -> None:
                     "README few-shot matrix has no archived run yet.",
                 ]
             )
-    pending_rows.extend(
-        [
-            [
-                "4-shot",
-                "M4",
-                "pending",
-                "",
-                "m4_4shot was discarded because the short run did not converge.",
-            ],
-            [
-                "16-shot",
-                "M5",
-                "pending",
-                "",
-                "m5_16shot was discarded because the 10-epoch LoRA stage was still climbing.",
-            ],
-        ]
-    )
     pending_rows.append(
         [
             "zero-shot",

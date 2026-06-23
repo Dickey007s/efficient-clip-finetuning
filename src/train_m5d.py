@@ -444,6 +444,7 @@ def main():
     parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
     parser.add_argument("--alpha", type=int, default=8, help="LoRA alpha")
     parser.add_argument("--lora_ckpt", type=str, default=None, help="Warm-start Stage 1 LoRA weights from checkpoint")
+    parser.add_argument("--coop_ckpt", type=str, default=None, help="Warm-start Stage 2 CoOp prompt from checkpoint")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save", type=str, default="outputs/m5d_lora_coop.pt")
     parser.add_argument("--num_workers", type=int, default=2, help="DataLoader workers")
@@ -484,6 +485,9 @@ def main():
         n_ctx=args.n_ctx, ctx_dim=ctx_dim, n_cls=43,
         classnames=CLASS_NAMES, clip_model=clip_model,
     ).to(DEVICE)
+    if args.coop_ckpt is not None:
+        prompt_learner.load_state_dict(torch.load(args.coop_ckpt, map_location=DEVICE))
+        print(f"[Checkpoint] Loaded CoOp prompt from {args.coop_ckpt}")
 
     # ========== Stage 1: LoRA Warm-up ==========
     print(f"\n{'='*60}")
