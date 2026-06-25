@@ -98,8 +98,15 @@ class Logger:
 
 
 class PromptLearner(nn.Module):
-    """CoOp 的 Prompt Learner。"""
-    def __init__(self, n_ctx, ctx_dim, n_cls, classnames, clip_model):
+    """CoOp 的 Prompt Learner。
+
+    ctx_init: 可选的领域感知初始化短语 (#6)。例如 "a photo of a traffic sign of"。
+        - None  -> 随机初始化 (std=0.02)，与原始 CoOp 行为完全一致。
+        - 字符串 -> 把短语的 token embedding 填入 context 的前 k 个位置，
+                    其余位置仍为随机初始化。n_ctx 保持不变，因此与 Stage 2
+                    (train_m5 --coop_ckpt / --n_ctx) 及多种子对比完全兼容。
+    """
+    def __init__(self, n_ctx, ctx_dim, n_cls, classnames, clip_model, ctx_init=None):
         super().__init__()
         self.n_ctx = n_ctx
         self.n_cls = n_cls
@@ -107,6 +114,22 @@ class PromptLearner(nn.Module):
 
         ctx_vectors = torch.empty(n_ctx, ctx_dim, dtype=self.dtype)
         nn.init.normal_(ctx_vectors, std=0.02)
+        self.init_desc = f"random(std=0.02), n_ctx={n_ctx}"
+
+        if ctx_init:
+            # 用真实短语的词向量作为 context 的初始值（领域感知初始化）。
+            init_ids = open_clip.tokenize(ctx_init).to(DEVICE)          # [1, 77]
+            with torch.no_grad():
+                init_emb = clip_model.token_embedding(init_ids).type(self.dtype)  # [1,77,dim]
+            eot = int(init_ids.argmax(dim=-1).item())                   # EOT 位置
+            phrase = init_emb[0, 1:eot, :]                              # 去掉 SOS / EOT，仅保留词 token
+            k = min(phrase.shape[0], n_ctx)
+            ctx_vectors[:k] = phrase[:k].detach().clone()
+            self.init_desc = (
+                f"ctx_init='{ctx_init}' ({k}/{n_ctx} 个 token 用短语初始化，"
+                f"其余 {n_ctx - k} 个随机)"
+            )
+
         self.ctx = nn.Parameter(ctx_vectors)
 
         prompt_prefix = " ".join(["X"] * n_ctx)
@@ -459,6 +482,10 @@ def main():
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--shots", type=int, default=None, help="Few-shot: shots per class")
     parser.add_argument("--n_ctx", type=int, default=16, help="Number of context tokens")
+    parser.add_argument("--ctx_init", type=str, default=None,
+                        help="#6 领域感知初始化短语，如 \"a photo of a traffic sign of\"；不填则随机初始化")
+    parser.add_argument("--cosine", action="store_true",
+                        help="Stage 1 CoOp 使用 cosine 退火 LR（探查收敛/局部最优问题）")
     parser.add_argument("--rank", type=int, default=4, help="LoRA rank")
     parser.add_argument("--alpha", type=int, default=8, help="LoRA alpha")
     parser.add_argument("--coop_ckpt", type=str, default=None, help="预训练 CoOp checkpoint 路径，加载则跳过 Stage 1")
@@ -501,8 +528,9 @@ def main():
     ctx_dim = clip_model.token_embedding.weight.shape[1]
     prompt_learner = PromptLearner(
         n_ctx=args.n_ctx, ctx_dim=ctx_dim, n_cls=43,
-        classnames=CLASS_NAMES, clip_model=clip_model,
+        classnames=CLASS_NAMES, clip_model=clip_model, ctx_init=args.ctx_init,
     ).to(DEVICE)
+    print(f"[Prompt] Context init: {prompt_learner.init_desc}")
 
     # ========== Stage 1: CoOp Warm-up ==========
     if args.coop_ckpt is not None and Path(args.coop_ckpt).exists():
@@ -529,6 +557,11 @@ def main():
 
         model = CoOpFeatureModel(clip_model, prompt_learner).to(DEVICE)
         optimizer = SGD(prompt_learner.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        scheduler = None
+        if args.cosine:
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.coop_epochs)
+            print("[Stage 1] Using cosine LR schedule.")
         scaler = make_grad_scaler(DEVICE)
         criterion = nn.CrossEntropyLoss()
 
@@ -537,6 +570,8 @@ def main():
         for epoch in range(args.coop_epochs):
             t0 = time.time()
             loss = train_epoch_features(model, feature_train_loader, optimizer, scaler, criterion)
+            if scheduler is not None:
+                scheduler.step()
             acc = evaluate_acc(model, feature_test_loader)
             epoch_time = time.time() - t0
             if acc > best_acc:

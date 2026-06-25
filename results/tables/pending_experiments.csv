@@ -1,8 +1,8 @@
 setting,method,status,planned_run_name,note
-8-shot,M1,pending,,README few-shot matrix has no archived run yet.
-8-shot,M2,pending,,README few-shot matrix has no archived run yet.
-8-shot,M3,pending,,README few-shot matrix has no archived run yet.
-4-shot,M1,pending,,README few-shot matrix has no archived run yet.
-4-shot,M2,pending,,README few-shot matrix has no archived run yet.
-4-shot,M3,pending,,README few-shot matrix has no archived run yet.
+8-shot,M1,completed,m1_8shot,Best Top-1: 44.55% (40 epochs lr=1e-3 batch=32 seed=42)
+8-shot,M2,completed,m2_8shot,Best Top-1: 62.34% (40 epochs lr=0.002 n_ctx=16 batch=32 seed=42)
+8-shot,M3,completed,m3_8shot,Best Top-1: 57.65% (40 epochs lr=1e-3 batch=32 seed=42)
+4-shot,M1,completed,m1_4shot,Best Top-1: 38.19% (60 epochs lr=1e-3 batch=16 seed=42)
+4-shot,M2,completed,m2_4shot,Best Top-1: 55.95% (60 epochs lr=0.002 n_ctx=16 batch=16 seed=42)
+4-shot,M3,completed,m3_4shot,Best Top-1: 52.79% (60 epochs lr=1e-3 batch=16 seed=42)
 zero-shot,M0,not_archived,,"check_clip.py provides a sanity check, but no full-test artifact is stored in outputs/."

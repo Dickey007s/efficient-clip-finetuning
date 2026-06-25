@@ -198,16 +198,16 @@ The cleaned tables under `results/tables/` are the source of truth for the curre
 
 ### Few-shot coverage matrix
 
-Blank entries are still pending and are intentionally left empty so future runs can be added directly. The filled 8-shot cells use the strongest converged archived run for each method; parameter-matched r=4 values are kept in the ablation tables below.
+All cells are now filled. Each few-shot result uses the strongest converged archived run for the method; parameter-matched r=4 values are kept in the ablation tables below.
 
 | Setting | M1 | M2 | M3 | M4 | M5 |
 |--------|----|----|----|----:|----:|
 | full    | 80.10% | 82.95% | 86.28% | **97.25%** | 96.05% |
 | 16-shot | 48.23% | 67.37% | 62.49% | 79.46% | **81.67%** |
-| 8-shot  |        |        |        | 73.85% | **74.56%** |
-| 4-shot  |        |        |        | 65.38% | **69.16%** |
+| 8-shot  | 44.55% | 62.34% | 57.65% | 73.85% | **74.56%** |
+| 4-shot  | 38.19% | 55.95% | 52.79% | 65.38% | **69.16%** |
 
-The corresponding placeholder list is stored in `results/tables/pending_experiments.csv`.
+Run records are stored in `results/tables/pending_experiments.csv`.
 
 ### Usable low-shot main runs (M4 vs. M5)
 
