@@ -192,9 +192,9 @@ The cleaned tables under `results/tables/` are the source of truth for the curre
 | M2 CoOp | 82.95% | 8,192 | Best checkpoint occurs before the last epoch |
 | M3 CLIP-Adapter | 86.28% | 131,072 | 10 epochs |
 | **M4 LoRA (r=4)** | **97.25%** | **147,456** | Best archived full-data result |
-| M5 CoOp→LoRA | 96.05% | 155,648 | 20 CoOp + 10 LoRA |
+| M5 CoOp→LoRA | 96.48% | 155,648 | 20 CoOp + 20 LoRA |
 
-**What the archived artifacts support**: across all three converged low-shot settings (4-, 8-, and 16-shot) M5 now edges out the matched M4 LoRA baseline, with the gap widening as labels become scarcer (+0.71 pp at 8-shot, +2.21 pp at 16-shot, +3.78 pp at 4-shot). The complementarity does **not** carry over to full data, where M4 (97.25%) still beats M5 (96.05%). The takeaway is that the CoOp warm-start helps most precisely when data is limited and the text anchor matters, and fades once the vision encoder has enough samples to adapt on its own.
+**What the archived artifacts support**: across all three converged low-shot settings (4-, 8-, and 16-shot) M5 now edges out the matched M4 LoRA baseline, with the gap widening as labels become scarcer (+0.71 pp at 8-shot, +2.21 pp at 16-shot, +3.78 pp at 4-shot). The complementarity does **not** carry over to full data, where M4 (97.25%) still beats M5 (96.48%). The takeaway is that the CoOp warm-start helps most precisely when data is limited and the text anchor matters, and fades once the vision encoder has enough samples to adapt on its own.
 
 ### Few-shot coverage matrix
 
@@ -202,7 +202,7 @@ All cells are now filled. Each few-shot result uses the strongest converged arch
 
 | Setting | M1 | M2 | M3 | M4 | M5 |
 |--------|----|----|----|----:|----:|
-| full    | 80.10% | 82.95% | 86.28% | **97.25%** | 96.05% |
+| full    | 80.10% | 82.95% | 86.28% | **97.25%** | 96.48% |
 | 16-shot | 48.23% | 67.37% | 62.49% | 79.46% | **81.67%** |
 | 8-shot  | 44.55% | 62.34% | 57.65% | 73.85% | **74.56%** |
 | 4-shot  | 38.19% | 55.95% | 52.79% | 65.38% | **69.16%** |
