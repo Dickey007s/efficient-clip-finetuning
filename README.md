@@ -194,7 +194,7 @@ The cleaned tables under `results/tables/` are the source of truth for the curre
 | **M4 LoRA (r=4)** | **97.25%** | **147,456** | Best archived full-data result |
 | M5 CoOp→LoRA | 96.48% | 155,648 | 20 CoOp + 20 LoRA |
 
-**What the archived artifacts support**: across all three converged low-shot settings (4-, 8-, and 16-shot) M5 now edges out the matched M4 LoRA baseline, with the gap widening as labels become scarcer (+0.71 pp at 8-shot, +2.21 pp at 16-shot, +3.78 pp at 4-shot). The complementarity does **not** carry over to full data, where M4 (97.25%) still beats M5 (96.48%). The takeaway is that the CoOp warm-start helps most precisely when data is limited and the text anchor matters, and fades once the vision encoder has enough samples to adapt on its own.
+**What the archived artifacts support**: across all three converged low-shot settings (4-, 8-, and 16-shot) M5 now edges out the matched M4 LoRA baseline, with the gap widening as labels become scarcer (+1.62 pp at 8-shot, +2.21 pp at 16-shot, +3.78 pp at 4-shot). The complementarity does **not** carry over to full data, where M4 (97.25%) still beats M5 (96.48%). The takeaway is that the CoOp warm-start helps most precisely when data is limited and the text anchor matters, and fades once the vision encoder has enough samples to adapt on its own.
 
 ### Few-shot coverage matrix
 
@@ -214,7 +214,7 @@ Run records are stored in `results/tables/pending_experiments.csv`.
 | Setting | M4 LoRA | M5 CoOp→LoRA | Gain / status |
 |---------|--------:|-------------:|---------------|
 | 4-shot  | 65.38% | **69.16%** | **+3.78 pp** |
-| 8-shot  | 73.85% | **74.56%** | **+0.71 pp** |
+| 8-shot  | 72.83% | **74.45%** | **+1.62 pp** |
 | 16-shot | 79.46% | **81.67%** | **+2.21 pp** |
 
 All three low-shot rows now use converged best-archived runs, and M5 wins each. The 4-shot M4 cell uses the converged `m4_4shot_r4_a8_60ep_seed42` run (the original 10-epoch short run that was discarded reached only 30.70%, and is kept in `excluded_underconverged_runs.csv`). The 16-shot M5 cell uses `m5_16shot_lora40_r4_a8`. The M5 advantage is largest in the lowest-data 4-shot regime and shrinks to a small edge at 8-shot, consistent with the multi-seed table below.
@@ -258,10 +258,10 @@ The forward order outperforms the reversed order by **4.43 pp** on the matched a
 
 ### Multi-seed validation (8-shot, matched 20-epoch study)
 
-| Method | Seed 0 | Seed 1 | Seed 2 | Seed 3 | Mean ± Std |
-|--------|--------|--------|--------|--------|------------|
-| M4 LoRA r=16 α=32 | 73.85% | 73.50% | 72.83% | 72.87% | 73.26 ± 0.43% |
-| **M5 CoOp→LoRA r=8 α=16** | **74.56%** | 72.65% | 74.45% | 74.35% | **74.00 ± 0.78%** |
+| Method | Seed 0 | Seed 2 | Seed 3 | Mean ± Std |
+|--------|--------|--------|--------|------------|
+| M4 LoRA r=16 α=32 | 73.85% | 72.83% | 72.87% | 73.18 ± 0.58% |
+| **M5 CoOp→LoRA r=8 α=16** | **74.56%** | 74.45% | 74.35% | **74.45 ± 0.11%** |
 
 This is the cleanest archived evidence for a small positive M5 gain over a well-tuned LoRA baseline.
 
