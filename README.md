@@ -1,4 +1,4 @@
-# Efficient Fine-Tuning of CLIP for Traffic Sign Recognition
+# Decoupled Dual-Encoder Tuning of CLIP for Traffic-Sign Recognition
 
 **Languages:** English | [简体中文](README.zh-CN.md)
 
@@ -13,9 +13,11 @@ only about 27.5 percent, far below typical natural-image benchmarks.
 
 This project presents a systematic comparison of five parameter-efficient
 fine-tuning methods — Zero-shot, Linear Probe, CoOp, CLIP-Adapter, and LoRA —
-under a consumer-GPU budget of 8 GB. The central question is which method offers
-the best trade-off between accuracy, trainable parameters, and labeled-data
-efficiency for adapting CLIP to traffic-sign recognition.
+under a consumer-GPU budget of 8 GB, with a focus on whether adapting CLIP's text
+encoder and vision encoder separately and sequentially (CoOp→LoRA) outperforms
+adapting either encoder alone. The central question is which method offers the best
+trade-off between accuracy, trainable parameters, and labeled-data efficiency for
+adapting CLIP to traffic-sign recognition.
 
 ---
 
