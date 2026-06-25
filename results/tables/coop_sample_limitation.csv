@@ -1,0 +1,6 @@
+setting,n_train_samples,coop_m2_best,lora_m4_best,gap_pp
+4-shot,172,55.95,65.38,-9.43
+8-shot,344,62.34,72.83,-10.49
+16-shot,688,67.37,79.46,-12.09
+full,26640,82.95,97.25,-14.30
+note,"CoOp gap to LoRA widens monotonically with sample count. 16-shot->full is 38x data for only +15.58pp, plateauing at 82.95%. CoOp full-data per-class: 24/43 classes <80%; LoRA: 0/43. Worst CoOp classes are direction-symmetric symbolic signs (frozen-feature bottleneck): keep_left 20.0% vs LoRA 96.7%; go_straight_or_left 26.7% vs 100%; dangerous_curve_left 30.0% vs 100%; dangerous_curve_right 47.8% vs 100%.",,,

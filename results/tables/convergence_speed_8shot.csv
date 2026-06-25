@@ -1,0 +1,6 @@
+target_test_acc,m4_lora_epoch,m5_cooplora_epoch,epochs_saved
+60%,9,4,5
+65%,11,6,5
+70%,13,9,4
+72%,17,11,6
+note,"8-shot seed-2 matched runs (M4 r=16 a=32 vs M5 r=8 a=16, 20 LoRA epochs). Epoch = first LoRA epoch reaching the target test accuracy. Epoch-1 acc: M4=30.51%, M5=54.46% (CoOp warm-start head-start +23.9 pp). M5 matches M4's 20-epoch result (72.83%) by epoch 12 (73.14%).",,
